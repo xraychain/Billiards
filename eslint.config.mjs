@@ -26,6 +26,7 @@ export default tseslint.config(
     ignores: [
       "dist/*",
       "!dist/picker.html",
+      "engine-dist/**",
       "node_modules/**",
       "webpack.config.js",
       "jest.config.js",
@@ -66,6 +67,21 @@ export default tseslint.config(
     },
     rules: {
       "no-undef": "off",
+    },
+  },
+  {
+    name: 'billiards/node-scripts',
+    files: ["scripts/**/*.mjs"],
+    languageOptions: {
+      globals: {
+        console: "readonly",
+        process: "readonly",
+        performance: "readonly",
+      },
+    },
+    rules: {
+      // build scripts run the project's own toolchain through npx
+      "sonarjs/no-os-command-from-path": "off",
     },
   },
   {
