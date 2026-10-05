@@ -8,6 +8,7 @@ export {
   stateHash,
 } from "./match"
 export { simulateShot, STEP, MAX_SHOT_MS } from "./simulate"
+export { configure } from "./configure"
 export type { SimOptions } from "./simulate"
 export { frozenTo, tableInfo } from "./rules/threecushion"
 export { suggestShot } from "./suggest"

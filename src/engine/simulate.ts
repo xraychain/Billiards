@@ -1,5 +1,6 @@
 import { Vector3 } from "three"
 import { Ball, State } from "../model/ball"
+import { Headless } from "../model/headless"
 import { OutcomeType } from "../model/outcome"
 import { cueStrike, mathavanAdapter } from "../model/physics/physics"
 import { Table } from "../model/table"
@@ -57,6 +58,19 @@ function toEvents(table: Table): OutcomeEvent[] {
   return events
 }
 
+function headlessTable(balls: BallState[]): Table {
+  const before = Headless.on
+  Headless.on = true
+  try {
+    Ball.id = 0
+    return new Table(
+      balls.map((b) => new Ball(new Vector3(b.x, b.y, 0), 0xffffff))
+    )
+  } finally {
+    Headless.on = before
+  }
+}
+
 /**
  * Play one shot to rest. Deterministic: the same inputs give the same
  * result on every call. Throws if the collision resolver cannot settle.
@@ -70,10 +84,7 @@ export function simulateShot(
 ): SimResult {
   configure(ruleType)
 
-  Ball.id = 0
-  const table = new Table(
-    balls.map((b) => new Ball(new Vector3(b.x, b.y, 0), 0xffffff))
-  )
+  const table = headlessTable(balls)
   table.cushionModel = mathavanAdapter
   table.cueball = table.balls[cueBall]
 

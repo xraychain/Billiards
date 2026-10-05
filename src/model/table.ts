@@ -16,6 +16,7 @@ import { R } from "./physics/constants"
 import { ProximityIndicator } from "../view/proximityindicator"
 import { checkProximity } from "../utils/proximity"
 import { ShotStartUtils, type ShotStartConditions } from "../utils/shotstart"
+import { Headless } from "./headless"
 
 interface Pair {
   a: Ball
@@ -41,7 +42,7 @@ export class Table {
   constructor(balls: Ball[]) {
     this.cueball = balls[0]
     this.initialiseBalls(balls)
-    if (typeof document !== "undefined") {
+    if (typeof document !== "undefined" && !Headless.on) {
       const session = Session.getInstance()
       // p1 is always MY cue (customParams), p2 is always the opponent's cue
       // (opponentParams). No playerIndex indirection: the cue shown follows

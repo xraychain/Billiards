@@ -12,6 +12,7 @@ import { join } from "node:path"
 
 const FILE = "vectors/threecushion.json"
 const HEAVY_FILE = "vectors/threecushion-heavy.json"
+const SELFCHECK_FILE = "src/panpa/selfcheck.json"
 const JSC =
   "/System/Library/Frameworks/JavaScriptCore.framework/Versions/Current/Helpers/jsc"
 
@@ -275,6 +276,20 @@ if (mode === "gen") {
     JSON.stringify({ engineVersion: E.ENGINE_VERSION, vectors }) + "\n"
   )
   console.log(`${vectors.length} vectors -> ${FILE}`)
+  // A few shots for the web view to replay when it loads, proving that the
+  // JS engine of that device computes what the server computes.
+  const shots = vectors
+    .filter((v) => v.expected.ok && v.expected.events[0].type === "shot")
+    .filter((_, i) => i % 40 === 0)
+    .slice(0, 10)
+    .map((v) => ({
+      state: v.state,
+      seat: v.seat,
+      action: v.action,
+      stateHash: v.expected.events[0].stateHash,
+    }))
+  writeFileSync(SELFCHECK_FILE, JSON.stringify(shots) + "\n")
+  console.log(`${shots.length} self-check shots -> ${SELFCHECK_FILE}`)
 } else if (mode === "check") {
   let ok = true
   for (const file of [FILE, HEAVY_FILE]) {

@@ -27,6 +27,7 @@ export default tseslint.config(
       "dist/*",
       "!dist/picker.html",
       "engine-dist/**",
+      "panpa-dist/**",
       "node_modules/**",
       "webpack.config.js",
       "jest.config.js",

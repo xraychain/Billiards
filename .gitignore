@@ -1,5 +1,6 @@
 # generated js files
 engine-dist/
+panpa-dist/
 dist/*.js
 !dist/lobby.js
 !dist/arena.js

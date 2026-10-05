@@ -9,6 +9,7 @@ import {
 import { BallMesh } from "../view/ballmesh"
 import { Pocket } from "./physics/pocket"
 import { BallAppearance } from "../view/ballappearance"
+import { Headless } from "./headless"
 
 export enum State {
   Stationary = "Stationary",
@@ -38,7 +39,7 @@ export class Ball {
     this.pos = pos.clone()
     this.label = label
     this.appearance = appearance
-    if (typeof document !== "undefined") {
+    if (typeof document !== "undefined" && !Headless.on) {
       this.ballmesh = new BallMesh(
         color || 0xeeeeee * Math.random(),
         label,

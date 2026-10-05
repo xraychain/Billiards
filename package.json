@@ -23,6 +23,8 @@
     "build": "npm run version-gen && webpack",
     "build:cf": "npm run version-gen && webpack && npm run sitemap:cf",
     "lint": "tsc --noEmit && eslint .",
+    "panpa:build": "node scripts/build-panpa.mjs",
+    "panpa:release": "node scripts/build-panpa.mjs --release",
     "engine:build": "node scripts/build-engine.mjs",
     "engine:vectors": "node scripts/engine-vectors.mjs",
     "engine:pack": "node scripts/build-engine.mjs && cd engine-dist && npm pack --silent && shasum -a 256 *.tgz",
