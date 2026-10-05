@@ -6,7 +6,7 @@
  *
  *   dev.html?mode=practice&opponent=bot&raceTo=10&locale=tr
  *   dev.html?mode=free
- *   dev.html?ws=ws://localhost:4300/ws&token=<access token>&table=<tableId>
+ *   dev.html?ws=ws://localhost:4400/ws&token=<access token>&table=<tableId>
  *            [&res=<reservation token>] [&spectate] [&log]
  *
  * &auto plays for you: it presses HIT whenever a shot is possible, aiming
