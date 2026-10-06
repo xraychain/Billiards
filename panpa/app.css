@@ -148,3 +148,63 @@ body {
 .tools button.on {
   background: #2f6fd0;
 }
+
+.thickness {
+  --thickness-size: 150px;
+
+  position: absolute;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  pointer-events: none;
+}
+
+.thickness-balls {
+  position: relative;
+  width: var(--thickness-size);
+  height: var(--thickness-size);
+  border-radius: 14px;
+  background: rgb(0 0 0 / 55%);
+  overflow: hidden;
+}
+
+.thickness-cue,
+.thickness-object {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 88%;
+  height: 88%;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.thickness-cue {
+  background: radial-gradient(
+    circle at 35% 35%,
+    #fff 0%,
+    #e4e4e4 30%,
+    #a0a0a0 65%,
+    #606060 90%,
+    #404040 100%
+  );
+  opacity: 0.9;
+}
+
+.thickness-object {
+  border: 1px solid rgb(0 0 0 / 60%);
+  filter: brightness(0.7);
+}
+
+.thickness-value {
+  font-size: 22px;
+  font-weight: 700;
+  color: #fff;
+  text-shadow: 0 1px 6px rgb(0 0 0 / 90%);
+  background: rgb(0 0 0 / 50%);
+  padding: 2px 14px;
+  border-radius: 8px;
+  min-height: 1.3em;
+}

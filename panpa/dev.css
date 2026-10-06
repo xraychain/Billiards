@@ -19,7 +19,10 @@ body {
   left: 8px;
   margin: 0;
   padding: 4px 6px;
-  font: 11px/1.3 ui-monospace, Menlo, monospace;
+  font:
+    11px/1.3 ui-monospace,
+    Menlo,
+    monospace;
   color: #dfe6f3;
   background: rgb(0 0 0 / 60%);
   border-radius: 4px;

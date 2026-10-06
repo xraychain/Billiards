@@ -42,8 +42,12 @@ export class TableView {
   private readonly cushion = new MeshLambertMaterial()
   private readonly frame = new MeshLambertMaterial()
   private readonly aimLine: Line
+  private readonly objectLine: Line
+  private readonly cueAfterLine: Line
   private readonly ghost: Mesh
+  private readonly ghostRing: Mesh
   private readonly cueStick: Mesh
+  private readonly tipDot: Mesh
   private readonly marker: Mesh
   /** half size of the table including rails, table units */
   private readonly outer: Vec2
@@ -77,25 +81,37 @@ export class TableView {
     this.scene.add(sun)
     this.scene.add(this.buildTable(rail))
 
-    this.aimLine = new Line(
-      new BufferGeometry().setFromPoints([new Vector3(), new Vector3()]),
-      new LineBasicMaterial({
+    const line = (opacity: number) =>
+      new Line(
+        new BufferGeometry().setFromPoints([new Vector3(), new Vector3()]),
+        new LineBasicMaterial({ color: 0xffffff, transparent: true, opacity })
+      )
+    this.aimLine = line(0.7)
+    this.objectLine = line(0.55)
+    this.cueAfterLine = line(0.55)
+    this.ghost = new Mesh(
+      new CircleGeometry(R, 32),
+      new MeshBasicMaterial({
         color: 0xffffff,
         transparent: true,
-        opacity: 0.7,
+        opacity: 0.3,
       })
     )
-    this.ghost = new Mesh(
+    this.ghostRing = new Mesh(
       new RingGeometry(R * 0.86, R, 32),
       new MeshBasicMaterial({
         color: 0xffffff,
         transparent: true,
-        opacity: 0.7,
+        opacity: 0.8,
       })
     )
     this.cueStick = new Mesh(
       new BoxGeometry(1, R * 0.36, R * 0.2),
       new MeshLambertMaterial({ color: 0xd9b48a })
+    )
+    this.tipDot = new Mesh(
+      new CircleGeometry(R * 0.16, 12),
+      new MeshBasicMaterial({ color: 0x2f6fd0 })
     )
     this.marker = new Mesh(
       new RingGeometry(R * 1.15, R * 1.3, 32),
@@ -105,7 +121,16 @@ export class TableView {
         opacity: 0.85,
       })
     )
-    for (const o of [this.aimLine, this.ghost, this.cueStick, this.marker]) {
+    for (const o of [
+      this.aimLine,
+      this.objectLine,
+      this.cueAfterLine,
+      this.ghost,
+      this.ghostRing,
+      this.cueStick,
+      this.tipDot,
+      this.marker,
+    ]) {
       o.visible = false
       o.position.z = R * 1.2
       this.scene.add(o)
@@ -230,15 +255,50 @@ export class TableView {
   }
 
   /**
-   * Aim guide from the cue ball along `angle`, ending where the cue ball
-   * first meets a ball or a cushion.
+   * The cue behind the cue ball, and with `assist` the guide: a line to
+   * the first contact, a ghost ball there, and where both balls go next.
+   * `offset` is the strike point; the cue moves across with its sideways
+   * part and a dot marks it on the ball.
    */
-  showAim(table: Table, cueBall: number, angle: number, pull: number) {
+  showAim(
+    table: Table,
+    cueBall: number,
+    angle: number,
+    pull: number,
+    offset: Vec2 | null,
+    assist: boolean
+  ) {
     const R = this.info.ballRadius
     const from = table.balls[cueBall].pos
     const dir = new Vector3(Math.cos(angle), Math.sin(angle), 0)
+    // to the left of the direction of travel, where positive side spin strikes
+    const perp = new Vector3(-dir.y, dir.x, 0)
+    const side = (offset?.x ?? 0) * R
+    const vertical = (offset?.y ?? 0) * R
+
+    const length = 28 * R
+    const back = R * 1.1 + pull * 6 * R + length / 2
+    this.cueStick.scale.x = length
+    this.cueStick.position
+      .copy(from)
+      .addScaledVector(dir, -back)
+      .addScaledVector(perp, side)
+    this.cueStick.position.z = R * 1.3
+    this.cueStick.rotation.z = angle
+    this.cueStick.visible = true
+    this.tipDot.position
+      .copy(from)
+      .addScaledVector(perp, side)
+      .addScaledVector(dir, -vertical * 0.5)
+    this.tipDot.position.z = R * 1.25
+    this.tipDot.visible = offset !== null
+
+    if (!assist) {
+      this.hideGuide()
+      return
+    }
     let reach = this.cushionDistance(from, dir)
-    let hitsBall = false
+    let object: Vector3 | null = null
     for (const b of table.balls) {
       if (b.id === cueBall) continue
       const to = b.pos.clone().sub(from)
@@ -248,29 +308,58 @@ export class TableView {
         const d = along - Math.sqrt(4 * R * R - off2)
         if (d < reach) {
           reach = d
-          hitsBall = true
+          object = b.pos
         }
       }
     }
     const end = from.clone().addScaledVector(dir, Math.max(0, reach))
-    this.aimLine.geometry.setFromPoints([
-      new Vector3(from.x, from.y, 0),
-      new Vector3(end.x, end.y, 0),
-    ])
-    this.aimLine.visible = true
+    this.setLine(this.aimLine, from, end)
     this.ghost.position.set(end.x, end.y, R * 1.2)
-    this.ghost.visible = hitsBall
+    this.ghostRing.position.set(end.x, end.y, R * 1.21)
+    this.ghost.visible = object !== null
+    this.ghostRing.visible = object !== null
+    if (object) {
+      // the object ball leaves along the line of centres; the cue ball
+      // along the tangent (a stun shot), the usual first guess
+      const n = object.clone().sub(end).normalize()
+      this.setLine(
+        this.objectLine,
+        object,
+        object.clone().addScaledVector(n, 4 * R)
+      )
+      const tangent = dir.clone().addScaledVector(n, -dir.dot(n))
+      const t = tangent.length() > 1e-6 ? tangent.normalize() : perp
+      this.setLine(
+        this.cueAfterLine,
+        end,
+        end.clone().addScaledVector(t, 3 * R)
+      )
+      this.objectLine.visible = true
+      this.cueAfterLine.visible = true
+    } else {
+      this.objectLine.visible = false
+      this.cueAfterLine.visible = false
+    }
+  }
 
-    const length = 28 * R
-    const back = R * 1.4 + pull * 6 * R + length / 2
-    this.cueStick.scale.x = length
-    this.cueStick.position.set(
-      from.x - dir.x * back,
-      from.y - dir.y * back,
-      R * 1.3
-    )
-    this.cueStick.rotation.z = angle
-    this.cueStick.visible = true
+  private setLine(line: Line, a: Vector3, b: Vector3) {
+    line.geometry.setFromPoints([
+      new Vector3(a.x, a.y, 0),
+      new Vector3(b.x, b.y, 0),
+    ])
+    line.visible = true
+  }
+
+  private hideGuide() {
+    for (const o of [
+      this.aimLine,
+      this.objectLine,
+      this.cueAfterLine,
+      this.ghost,
+      this.ghostRing,
+    ]) {
+      o.visible = false
+    }
   }
 
   private cushionDistance(from: Vector3, dir: Vector3): number {
@@ -284,9 +373,9 @@ export class TableView {
   }
 
   hideAim() {
-    this.aimLine.visible = false
-    this.ghost.visible = false
+    this.hideGuide()
     this.cueStick.visible = false
+    this.tipDot.visible = false
   }
 
   /** Ring around a ball (the cue ball in turn, or the one picked up). */

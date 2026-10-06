@@ -16,18 +16,47 @@ function el(tag: string, className: string, parent: HTMLElement): HTMLElement {
   return node
 }
 
-/** Track a press-and-drag on `target`, reporting pointer positions. */
+/**
+ * Track a press-and-drag on `target`, reporting pointer positions. The
+ * press is kept to the control: it never reaches the table underneath and
+ * the browser gets no chance to scroll or zoom with it.
+ */
 function drag(target: HTMLElement, move: (e: PointerEvent) => void) {
+  let active: number | null = null
   target.addEventListener("pointerdown", (e) => {
-    target.setPointerCapture(e.pointerId)
-    move(e)
+    if (active !== null || !e.isPrimary) {
+      return
+    }
+    active = e.pointerId
     e.preventDefault()
+    e.stopPropagation()
+    try {
+      target.setPointerCapture(e.pointerId)
+    } catch {
+      // capture is a convenience; the pointer id check below still works
+    }
+    move(e)
   })
   target.addEventListener("pointermove", (e) => {
-    if (target.hasPointerCapture(e.pointerId)) {
+    if (e.pointerId === active) {
+      e.preventDefault()
+      e.stopPropagation()
       move(e)
     }
   })
+  const release = (e: PointerEvent) => {
+    if (e.pointerId === active) {
+      active = null
+      e.stopPropagation()
+    }
+  }
+  target.addEventListener("pointerup", release)
+  target.addEventListener("pointercancel", release)
+  for (const type of ["touchstart", "touchmove", "touchend"]) {
+    target.addEventListener(type, (e) => e.stopPropagation(), {
+      passive: false,
+    })
+  }
 }
 
 /**
@@ -51,6 +80,10 @@ export class Controls {
   private readonly respot: HTMLButtonElement
   private readonly tools: HTMLElement
   private readonly toolButtons = new Map<CommandName, HTMLButtonElement>()
+  private readonly thickness: HTMLElement
+  private readonly thicknessObject: HTMLElement
+  private readonly thicknessValue: HTMLElement
+  private thicknessTimer: ReturnType<typeof setTimeout> | null = null
 
   constructor(
     host: HTMLElement,
@@ -66,9 +99,18 @@ export class Controls {
     this.respot = el("button", "small", this.root) as HTMLButtonElement
     this.hit = el("button", "hit", this.root) as HTMLButtonElement
     this.tools = el("div", "tools", host)
+    this.thickness = el("div", "thickness", host)
+    const balls = el("div", "thickness-balls", this.thickness)
+    this.thicknessObject = el("div", "thickness-object", balls)
+    el("div", "thickness-cue", balls)
+    this.thicknessValue = el("div", "thickness-value", this.thickness)
+    this.thickness.hidden = true
 
     drag(this.pad, (e) => this.movePad(e))
     drag(this.bar, (e) => this.moveBar(e))
+    for (const node of [this.root, this.tools]) {
+      node.addEventListener("pointerdown", (e) => e.stopPropagation())
+    }
     this.hit.addEventListener("click", () => this.handlers.onHit())
     this.respot.addEventListener("click", () => this.handlers.onRespot())
     this.sideButton.addEventListener("click", () => {
@@ -111,6 +153,45 @@ export class Controls {
     s.left = `${tableArea.x}px`
     s.top = `${tableArea.y}px`
     s.width = `${tableArea.w}px`
+    const t = this.thickness.style
+    t.left = `${tableArea.x + tableArea.w / 2}px`
+    t.top = `${tableArea.y + tableArea.h / 2}px`
+    const size = Math.round(Math.min(tableArea.h * 0.42, 150))
+    t.setProperty("--thickness-size", `${size}px`)
+  }
+
+  /**
+   * The cut seen from behind the cue ball: the object ball's silhouette
+   * behind it, shifted by `overlap` (in cue ball radii, positive to the
+   * right), with the thickness of the hit as a percentage. Shown while
+   * aiming and shortly after; null when nothing is in the line of aim.
+   */
+  showThickness(hit: { overlap: number; colour: string } | null) {
+    this.thickness.hidden = false
+    if (this.thicknessTimer) {
+      clearTimeout(this.thicknessTimer)
+    }
+    this.thicknessTimer = setTimeout(() => this.hideThickness(), 900)
+    if (!hit) {
+      this.thicknessObject.style.visibility = "hidden"
+      this.thicknessValue.textContent = ""
+      return
+    }
+    const percent = Math.round(
+      (1 - Math.min(Math.abs(hit.overlap) / 2, 1)) * 100
+    )
+    this.thicknessObject.style.visibility = "visible"
+    this.thicknessObject.style.left = `${50 + hit.overlap * 45}%`
+    this.thicknessObject.style.background = hit.colour
+    this.thicknessValue.textContent = `${percent}%`
+  }
+
+  hideThickness() {
+    this.thickness.hidden = true
+    if (this.thicknessTimer) {
+      clearTimeout(this.thicknessTimer)
+      this.thicknessTimer = null
+    }
   }
 
   setState(state: { canShoot: boolean; opening: boolean; frozen: boolean }) {

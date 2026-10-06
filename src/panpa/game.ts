@@ -15,6 +15,8 @@ import {
   Shot,
   ShotEvent,
 } from "../engine/types"
+import { Overlap } from "../utils/overlap"
+import { unitAtAngle } from "../utils/three-utils"
 import { Sound } from "../view/sound"
 import { Bridge } from "./bridge"
 import { Controls } from "./controls"
@@ -345,6 +347,9 @@ export class Game {
   }
 
   private serverState(d: any) {
+    if (d?.mySeat === 0 || d?.mySeat === 1) {
+      this.mySeat = d.mySeat
+    }
     const match: MatchState | undefined = d?.match
     if (!match) {
       return
@@ -356,9 +361,6 @@ export class Game {
         `${match.engineVersion} / ${ENGINE_VERSION}`
       )
       return
-    }
-    if (d.mySeat === 0 || d.mySeat === 1) {
-      this.mySeat = d.mySeat
     }
     const first = this.state === null
     this.show(match)
@@ -426,7 +428,12 @@ export class Game {
         // let the player see the balls being set up
         this.holdUntil = now + 500
         break
-      case "turn":
+      case "turn": {
+        const timedOut = (event as any).timedOut
+        if (timedOut && state.stage !== "shootout") {
+          state.innings[timedOut.seat as Seat]++
+          state.run = 0
+        }
         state.turnSeat = event.seat
         state.shotNo = event.shotNo
         state.stage = event.stage
@@ -435,6 +442,7 @@ export class Game {
         this.controls.resetSpin()
         this.placeForTurn()
         break
+      }
       case "extension":
         state.extensionsLeft[event.seat] = event.left
         break
@@ -458,9 +466,18 @@ export class Game {
       this.error("DESYNC", false, off.toExponential(2))
     }
     this.player.place(event.final)
-    if (this.state) {
-      this.state.balls = event.final
-      this.state.scores = event.scores
+    const s = this.state
+    if (s) {
+      s.balls = event.final
+      s.scores = event.scores
+      // innings and run as the engine counts them, so the HUD can show
+      // them in a match too
+      if (event.outcome.points > 0) {
+        s.run++
+      } else if (event.stage !== "shootout") {
+        s.innings[event.seat]++
+        s.run = 0
+      }
     }
     if (this.prefs.haptics) {
       if (event.outcome.points > 0) {
@@ -718,8 +735,18 @@ export class Game {
 
   private bindPointer(canvas: HTMLCanvasElement) {
     const at = (e: PointerEvent) => this.view.toTable(e.clientX, e.clientY)
+    let active: number | null = null
     canvas.addEventListener("pointerdown", (e) => {
-      canvas.setPointerCapture(e.pointerId)
+      if (active !== null || !e.isPrimary || e.target !== canvas) {
+        return
+      }
+      active = e.pointerId
+      e.preventDefault()
+      try {
+        canvas.setPointerCapture(e.pointerId)
+      } catch {
+        // without capture the pointer id check below still applies
+      }
       const p = at(e)
       if (this.free?.placing && !this.player.playing) {
         this.dragBall = this.ballAt(p.x, p.y)
@@ -729,9 +756,10 @@ export class Game {
       }
     })
     canvas.addEventListener("pointermove", (e) => {
-      if (!canvas.hasPointerCapture(e.pointerId)) {
+      if (e.pointerId !== active) {
         return
       }
+      e.preventDefault()
       const p = at(e)
       if (this.dragBall !== null) {
         this.dragMoved = true
@@ -740,7 +768,12 @@ export class Game {
         this.aimTo(p.x, p.y)
       }
     })
-    const release = () => {
+    const release = (e: PointerEvent) => {
+      if (e.pointerId !== active) {
+        return
+      }
+      active = null
+      this.controls.hideThickness()
       if (this.dragBall !== null && !this.dragMoved && this.free) {
         // a tap picks the ball to play with
         this.free.cueBall = this.dragBall
@@ -762,6 +795,24 @@ export class Game {
     }
     this.angle = Math.atan2(y - from.y, x - from.x)
     this.sendAim()
+    this.showThickness(cueBall)
+  }
+
+  /** The cut on the first ball in the line of aim, while aiming. */
+  private showThickness(cueBall: number) {
+    const table = this.player.table
+    const hit = new Overlap(table.balls).getOverlapOffset(
+      table.balls[cueBall],
+      unitAtAngle(this.angle)
+    )
+    this.controls.showThickness(
+      hit
+        ? {
+            overlap: hit.overlap,
+            colour: `#${hit.ball.ballmesh.color.getHexString()}`,
+          }
+        : null
+    )
   }
 
   private ballAt(x: number, y: number): number | null {
@@ -860,16 +911,32 @@ export class Game {
     this.view.render()
   }
 
+  /** The salon may switch the aiming guide off in matches. */
+  private assist(): boolean {
+    if (this.mode !== "match" && this.mode !== "spectate") {
+      return true
+    }
+    return (this.state?.config as any)?.assist !== false
+  }
+
   private drawAim() {
     const table = this.player.table
     const cueBall = this.cueBall()
     const mine = this.shooter() !== null || this.canShootFree()
+    const assist = this.assist()
     if (mine && cueBall !== null) {
-      this.view.showAim(table, cueBall, this.angle, this.controls.power)
+      this.view.showAim(
+        table,
+        cueBall,
+        this.angle,
+        this.controls.power,
+        this.controls.offset,
+        assist
+      )
       this.view.mark(null)
     } else if (this.remoteAim && this.state && !this.current) {
       const ball = this.state.cueBallOf[this.remoteAim.seat]
-      this.view.showAim(table, ball, this.remoteAim.angle, 0.3)
+      this.view.showAim(table, ball, this.remoteAim.angle, 0.3, null, assist)
       this.view.mark(null)
     } else {
       this.view.hideAim()
