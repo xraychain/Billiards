@@ -1,4 +1,4 @@
-import { ShotLimits, Side, Vec2 } from "../engine/types"
+import { Shot, ShotLimits, Side, Vec2 } from "../engine/types"
 import { t, TextKey } from "./i18n"
 import { CommandName, Rect } from "./protocol"
 
@@ -264,6 +264,14 @@ export class Controls {
       button.hidden = !available.includes(name)
       button.classList.toggle("on", name === "placeMode" && placing)
     })
+  }
+
+  /** Put a shot's strike point and power on the controls. */
+  setShot(shot: Shot, limits: ShotLimits) {
+    this.offset = { x: shot.offset.x, y: shot.offset.y }
+    const [min, max] = limits.power
+    this.power = Math.min(1, Math.max(0, (shot.power - min) / (max - min)))
+    this.draw()
   }
 
   /** Power in engine units. */

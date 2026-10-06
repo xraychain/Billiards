@@ -2,6 +2,7 @@ import {
   applyAction,
   createMatch,
   ENGINE_VERSION,
+  frozenTo,
   SHOT_LIMITS,
   suggestShot,
 } from "../engine"
@@ -57,9 +58,16 @@ const AIM_SEND_MS = 100
 
 interface FreeState {
   cueBall: number
-  placing: boolean
   lastStart: BallState[] | null
   lastShot: Shot | null
+}
+
+/** A practice position the player can come back to. */
+interface PracticeStep {
+  /** the referee's state before the step */
+  state: MatchState
+  /** the shot played from it; null when the balls were moved by hand */
+  action: Action | null
 }
 
 /** "0.5.2" and "0.5.9" are compatible; before 1.0 the minor is breaking. */
@@ -86,7 +94,15 @@ export class Game {
   private state: MatchState | null = null
   /** practice: the referee's state, ahead of `state` while events play */
   private refereeState: MatchState | null = null
+  /** practice: `state` has caught up with the referee */
+  private refereeShown = true
   private free: FreeState | null = null
+  /** practice and free play: the player is moving balls by hand */
+  private placing = false
+  /** practice: positions before each of the player's shots, oldest first */
+  private history: PracticeStep[] = []
+  /** practice: the last shot played or undone, for "repeat" */
+  private lastPlayed: PracticeStep | null = null
   private readonly queue: BilEvent[] = []
   private current: ShotEvent | null = null
   private holdUntil = 0
@@ -216,6 +232,9 @@ export class Game {
     this.state = null
     this.refereeState = null
     this.free = null
+    this.placing = false
+    this.history = []
+    this.lastPlayed = null
     this.mySeat = null
     this.botSeat = null
     this.queue.length = 0
@@ -280,14 +299,19 @@ export class Game {
   }
 
   private startPractice(raceTo: number) {
+    this.history = []
+    this.lastPlayed = null
+    this.placing = false
     this.refereeState = this.newMatch(Math.min(100, Math.max(1, raceTo)))
+    this.refereeShown = false
     this.show(this.refereeState)
     this.bridge.send({ t: "game.ready", d: {} })
   }
 
   private startFree() {
     this.player.place(this.newMatch(10).balls)
-    this.free = { cueBall: 0, placing: false, lastStart: null, lastShot: null }
+    this.free = { cueBall: 0, lastStart: null, lastShot: null }
+    this.placing = false
     this.aimAtRed()
     this.refresh()
     this.bridge.send({ t: "game.ready", d: {} })
@@ -397,10 +421,12 @@ export class Game {
       this.queue.length === 0 &&
       this.refereeState &&
       this.state &&
-      this.state !== this.refereeState
+      !this.refereeShown
     ) {
       // practice: everything has been shown, take the referee's full state
-      this.state = this.refereeState
+      // (a copy: events patch `state`, the referee's own stays untouched)
+      this.state = JSON.parse(JSON.stringify(this.refereeState))
+      this.refereeShown = true
       this.refresh()
       this.botTurn()
     }
@@ -505,7 +531,7 @@ export class Game {
     if (!s || s.phase !== "playing" || this.current || this.queue.length > 0) {
       return null
     }
-    if (this.pending || !this.connected || this.paused) {
+    if (this.pending || !this.connected || this.paused || this.placing) {
       return null
     }
     if (this.mode === "match") {
@@ -518,7 +544,7 @@ export class Game {
   }
 
   private canShootFree(): boolean {
-    return this.free !== null && !this.player.playing && !this.free.placing
+    return this.free !== null && !this.player.playing && !this.placing
   }
 
   private cueBall(): number | null {
@@ -649,12 +675,19 @@ export class Game {
       this.refresh()
       return
     }
-    const result = applyAction(this.refereeState!, seat, action)
+    const before = this.refereeState!
+    const result = applyAction(before, seat, action)
     if (!result.ok) {
       this.error(result.code, false, result.reason)
       return
     }
+    if (seat !== this.botSeat) {
+      const step = { state: before, action }
+      this.history.push(step)
+      this.lastPlayed = step
+    }
     this.refereeState = result.state
+    this.refereeShown = false
     result.events.forEach((e) => this.enqueue(e))
     this.refresh()
   }
@@ -662,6 +695,9 @@ export class Game {
   private botTurn() {
     const s = this.refereeState
     if (!s || s.phase !== "playing" || s.turnSeat !== this.botSeat) {
+      return
+    }
+    if (this.placing) {
       return
     }
     const seat = s.turnSeat
@@ -702,34 +738,104 @@ export class Game {
     if (!this.commands().includes(name)) {
       return
     }
-    const free = this.free
     if (name === "rerack") {
-      if (free) {
+      if (this.free) {
         this.startFree()
       } else {
         this.startPractice(this.refereeState?.config.raceTo ?? 10)
       }
       return
     }
-    if (!free) {
-      return
-    }
     if (name === "placeMode") {
-      free.placing = !free.placing
+      this.placing = !this.placing
+      if (!this.placing && this.refereeState) {
+        this.commitPlacement()
+      }
+    } else if (this.free) {
+      if (name === "undo") {
+        this.player.place(this.free.lastStart!)
+      } else if (name === "repeat") {
+        this.playFree()
+      }
     } else if (name === "undo") {
-      this.player.place(free.lastStart!)
+      this.undoPractice()
     } else if (name === "repeat") {
-      this.playFree()
+      this.repeatPractice()
     }
     this.refresh()
   }
 
+  /** Practice: the balls as the player left them become the position. */
+  private commitPlacement() {
+    const before = this.refereeState!
+    const state: MatchState = JSON.parse(JSON.stringify(before))
+    state.balls = this.player.positions()
+    state.opening = false
+    state.frozen = frozenTo(state.balls, state.cueBallOf[state.turnSeat])
+    this.history.push({ state: before, action: null })
+    this.refereeState = state
+    this.refereeShown = false
+    this.show(state)
+  }
+
+  /** Practice: back to the position before the last shot or placement. */
+  private undoPractice() {
+    const step = this.history.pop()
+    if (!step) {
+      return
+    }
+    if (step.action) {
+      this.lastPlayed = step
+      this.showShot(step.action)
+    }
+    this.refereeState = step.state
+    this.refereeShown = false
+    this.show(step.state)
+  }
+
+  /** Practice: the last shot again, from where it was played. */
+  private repeatPractice() {
+    const step = this.lastPlayed
+    if (!step?.action) {
+      return
+    }
+    this.refereeState = step.state
+    this.refereeShown = false
+    this.show(step.state)
+    this.showShot(step.action)
+    this.act(step.state.turnSeat, step.action)
+  }
+
+  /** Put a shot's aim, strike point and power back on the controls. */
+  private showShot(action: Action) {
+    if (action.type !== "shoot") {
+      return
+    }
+    this.angle = action.shot.angle
+    this.controls.setShot(action.shot, SHOT_LIMITS)
+    if (action.side) {
+      this.controls.side = action.side
+      this.controls.refreshText()
+    }
+  }
+
   private commands(): CommandName[] {
+    if (this.current || this.queue.length > 0 || this.player.playing) {
+      return []
+    }
     if (this.mode === "practice") {
-      return this.current || this.queue.length > 0 ? [] : ["rerack"]
+      const list: CommandName[] = ["placeMode"]
+      if (this.history.length > 0) {
+        list.push("undo")
+      }
+      if (this.lastPlayed?.action) {
+        list.push("repeat")
+      }
+      list.push("rerack")
+      return list
     }
     const free = this.free
-    if (!free || this.player.playing) {
+    if (!free) {
       return []
     }
     const list: CommandName[] = ["placeMode", "rerack"]
@@ -757,7 +863,7 @@ export class Game {
         // without capture the pointer id check below still applies
       }
       const p = at(e)
-      if (this.free?.placing && !this.player.playing) {
+      if (this.placing && !this.player.playing) {
         this.dragBall = this.ballAt(p.x, p.y)
         this.dragMoved = false
       } else {
@@ -773,7 +879,7 @@ export class Game {
       if (this.dragBall !== null) {
         this.dragMoved = true
         this.moveBall(this.dragBall, p.x, p.y)
-      } else if (!this.free?.placing) {
+      } else if (!this.placing) {
         this.aimTo(p.x, p.y)
       }
     })
@@ -783,14 +889,41 @@ export class Game {
       }
       active = null
       this.controls.hideThickness()
-      if (this.dragBall !== null && !this.dragMoved && this.free) {
-        // a tap picks the ball to play with
-        this.free.cueBall = this.dragBall
+      if (this.dragBall !== null && !this.dragMoved) {
+        this.pickCueBall(this.dragBall)
       }
       this.dragBall = null
     }
     canvas.addEventListener("pointerup", release)
     canvas.addEventListener("pointercancel", release)
+  }
+
+  /** Practice, while placing: the ball of the seat whose turn it is. */
+  private placedCueBall(): number | null {
+    const s = this.refereeState
+    return s && s.phase === "playing" ? s.cueBallOf[s.turnSeat] : null
+  }
+
+  /** A tap while placing: play with that ball (practice: that seat's turn). */
+  private pickCueBall(id: number) {
+    if (this.free) {
+      this.free.cueBall = id
+      return
+    }
+    const s = this.refereeState
+    if (!s || s.phase !== "playing") {
+      return
+    }
+    const seat = s.cueBallOf.indexOf(id) as Seat | -1
+    if (seat === -1 || seat === this.botSeat) {
+      return
+    }
+    const next: MatchState = JSON.parse(JSON.stringify(s))
+    next.turnSeat = seat
+    next.run = 0
+    next.frozen = frozenTo(next.balls, id)
+    this.refereeState = next
+    this.state!.turnSeat = seat
   }
 
   /** Inside the table's box on the page, with a small margin. */
@@ -877,7 +1010,7 @@ export class Game {
       frozen: seat !== null && (s?.frozen.length ?? 0) > 0,
     })
     const commands = this.commands()
-    this.controls.setTools(commands, !!this.free?.placing, !this.nativeTools)
+    this.controls.setTools(commands, this.placing, !this.nativeTools)
     if (this.mode === null) {
       return
     }
@@ -961,9 +1094,9 @@ export class Game {
       this.view.mark(null)
     } else {
       this.view.hideAim()
-      const picked = this.free?.placing
-        ? table.balls[this.free.cueBall].pos
-        : null
+      const held = this.free ? this.free.cueBall : this.placedCueBall()
+      const picked =
+        this.placing && held !== null ? table.balls[held].pos : null
       this.view.mark(picked)
     }
   }
