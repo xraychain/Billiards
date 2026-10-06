@@ -60,6 +60,10 @@ body {
   flex: none;
   width: 86%;
   aspect-ratio: 1;
+  -webkit-touch-callout: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-user-drag: none;
   border-radius: 50%;
   background: radial-gradient(circle at 35% 30%, #fff, #d9d9d2 70%, #b9b9b0);
   box-shadow: 0 1px 4px rgb(0 0 0 / 50%);
@@ -70,6 +74,7 @@ body {
   position: absolute;
   width: 22%;
   aspect-ratio: 1;
+  box-sizing: border-box;
   border-radius: 50%;
   background: #2f6fd0;
   border: 1px solid #fff;
@@ -101,7 +106,9 @@ body {
 .controls button,
 .tools button {
   font: inherit;
+  font-size: 16px;
   font-weight: 600;
+  touch-action: manipulation;
   color: #fff;
   border: 0;
   border-radius: 8px;
@@ -113,15 +120,13 @@ body {
 .controls .small {
   flex: none;
   width: 92%;
-  padding: 5px 0;
-  font-size: 12px;
+  padding: 4px 0;
 }
 
 .controls .hit {
   flex: none;
   width: 92%;
   padding: 9px 0;
-  font-size: 15px;
   letter-spacing: 0.04em;
   background: #c9342b;
 }
@@ -142,7 +147,6 @@ body {
 
 .tools button {
   padding: 6px 10px;
-  font-size: 12px;
   pointer-events: auto;
 }
 
@@ -208,4 +212,21 @@ body {
   padding: 2px 14px;
   border-radius: 8px;
   min-height: 1.3em;
+}
+
+.debug {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 100%;
+  margin-top: 2px;
+  font:
+    9px/1.2 ui-monospace,
+    Menlo,
+    monospace;
+  color: #fff;
+  text-shadow: 0 1px 2px #000;
+  text-align: center;
+  white-space: normal;
+  pointer-events: none;
 }

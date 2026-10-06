@@ -55,10 +55,17 @@ function drag(target: HTMLElement, move: (e: PointerEvent) => void) {
   }
   target.addEventListener("pointerup", release)
   target.addEventListener("pointercancel", release)
+  // iOS starts its long-press and magnifier gestures from touchstart's
+  // default action; refuse it on the control itself
   for (const type of ["touchstart", "touchmove", "touchend"]) {
-    target.addEventListener(type, (e) => e.stopPropagation(), {
-      passive: false,
-    })
+    target.addEventListener(
+      type,
+      (e) => {
+        e.preventDefault()
+        e.stopPropagation()
+      },
+      { passive: false }
+    )
   }
 }
 
@@ -83,6 +90,8 @@ export class Controls {
   private readonly respot: HTMLButtonElement
   private readonly tools: HTMLElement
   private readonly toolButtons = new Map<CommandName, HTMLButtonElement>()
+  private readonly debug: HTMLElement
+  private lastEvent = "-"
   private readonly thickness: HTMLElement
   private readonly thicknessObject: HTMLElement
   private readonly thicknessValue: HTMLElement
@@ -102,6 +111,7 @@ export class Controls {
     this.respot = el("button", "small", this.root) as HTMLButtonElement
     this.hit = el("button", "hit", this.root) as HTMLButtonElement
     this.tools = el("div", "tools", host)
+    this.debug = el("div", "debug", this.root)
     this.thickness = el("div", "thickness", host)
     const balls = el("div", "thickness-balls", this.thickness)
     this.thicknessObject = el("div", "thickness-object", balls)
@@ -111,6 +121,31 @@ export class Controls {
 
     drag(this.pad, (e) => this.movePad(e))
     drag(this.bar, (e) => this.moveBar(e))
+    // temporary: what the device does to the pad, for the first iPhone tests
+    for (const type of [
+      "pointerdown",
+      "pointerup",
+      "pointercancel",
+      "touchstart",
+      "touchend",
+      "touchcancel",
+      "contextmenu",
+      "focusin",
+    ]) {
+      this.pad.addEventListener(type, (e) => {
+        this.lastEvent = `${type}${e.target === this.tip ? "@tip" : ""}`
+        this.updateDebug()
+      })
+    }
+    globalThis.visualViewport?.addEventListener("resize", () => {
+      this.lastEvent = "vv.resize"
+      this.updateDebug()
+    })
+    globalThis.visualViewport?.addEventListener("scroll", () => {
+      this.lastEvent = "vv.scroll"
+      this.updateDebug()
+    })
+    setInterval(() => this.updateDebug(), 500)
     for (const node of [this.root, this.tools]) {
       node.addEventListener("pointerdown", (e) => e.stopPropagation())
     }
@@ -148,6 +183,24 @@ export class Controls {
     s.top = `${area.y}px`
     s.width = `${area.w}px`
     s.height = `${area.h}px`
+    // fixed pixel sizes: nothing for a layout pass to re-resolve
+    const pad = Math.round(area.w * 0.86)
+    this.pad.style.width = `${pad}px`
+    this.pad.style.height = `${pad}px`
+    const tip = Math.round(pad * 0.22)
+    this.tip.style.width = `${tip}px`
+    this.tip.style.height = `${tip}px`
+  }
+
+  private updateDebug() {
+    const p = this.pad.getBoundingClientRect()
+    const t = this.tip.getBoundingClientRect()
+    const vv = globalThis.visualViewport
+    this.debug.textContent =
+      `pad ${p.width.toFixed(0)}×${p.height.toFixed(0)} ` +
+      `tip ${t.width.toFixed(1)}×${t.height.toFixed(1)} ` +
+      `dpr ${(globalThis.devicePixelRatio || 1).toFixed(2)} ` +
+      `vv ${vv ? vv.scale.toFixed(2) : "-"} ${this.lastEvent}`
   }
 
   /** Practice and free play buttons, along the top of the table area. */
