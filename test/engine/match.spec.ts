@@ -585,6 +585,21 @@ describe("engine shot suggester", () => {
     expect(event.outcome.events[0]).to.include({ type: "collision", b: 2 })
   })
 
+  it("plays the chosen shot unsteadily when asked, within the limits", () => {
+    const state = createMatch(config)
+    const exact = suggestShot(state, 0, lcg(5), { tries: 10 })
+    const shaky = suggestShot(state, 0, lcg(5), {
+      tries: 10,
+      aimError: 0.01,
+    })
+    expect(shaky).to.not.deep.equal(exact)
+    expect(Math.abs(shaky.angle - exact.angle)).to.be.below(0.1)
+    expect(shaky.power).to.be.within(SHOT_LIMITS.power[0], SHOT_LIMITS.power[1])
+    expect(Math.hypot(shaky.offset.x, shaky.offset.y)).to.be.at.most(
+      SHOT_LIMITS.offsetMax
+    )
+  })
+
   it("does not modify the state", () => {
     const state = createMatch(config)
     const before = JSON.stringify(state)

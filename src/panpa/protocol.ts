@@ -36,9 +36,13 @@ export interface Prefs {
   quality?: "low" | "mid" | "high"
 }
 
+export type BotLevel = "easy" | "normal" | "hard" | "pro"
+
 export interface PracticeOptions {
   raceTo?: number
   opponent?: "none" | "bot"
+  /** how well the bot plays; "normal" when omitted */
+  botLevel?: BotLevel
 }
 
 export interface InitMessage extends Partial<Layout> {

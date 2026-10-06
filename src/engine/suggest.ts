@@ -6,6 +6,40 @@ import { BallState, MatchState, Seat, Shot } from "./types"
 export interface SuggestOptions {
   /** candidate shots to simulate before settling for a legal miss */
   tries?: number
+  /**
+   * How unsteady the hand is that plays the chosen shot: standard deviation
+   * of the aiming error in radians. Power and strike point wobble in
+   * proportion. 0 (the default) plays the shot exactly as found.
+   */
+  aimError?: number
+}
+
+/** Normally distributed number from two uniform ones. */
+function gauss(rng: () => number): number {
+  const u = Math.max(rng(), 1e-12)
+  return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * rng())
+}
+
+/** The shot as an imperfect player would deliver it. */
+function unsteady(shot: Shot, aimError: number, rng: () => number): Shot {
+  const [pMin, pMax] = SHOT_LIMITS.power
+  // one degree of aim goes with about 6% of power and 0.035 of strike point
+  const scale = aimError / (Math.PI / 180)
+  const power = shot.power * (1 + gauss(rng) * 0.06 * scale)
+  let x = shot.offset.x + gauss(rng) * 0.035 * scale
+  let y = shot.offset.y + gauss(rng) * 0.035 * scale
+  const length = Math.hypot(x, y)
+  const limit = SHOT_LIMITS.offsetMax * 0.98
+  if (length > limit) {
+    x *= limit / length
+    y *= limit / length
+  }
+  return {
+    angle: Math.fround(shot.angle + gauss(rng) * aimError),
+    power: Math.fround(Math.min(pMax, Math.max(pMin, power))),
+    elevation: shot.elevation,
+    offset: { x: Math.fround(x), y: Math.fround(y) },
+  }
 }
 
 /** A candidate aimed near an object ball, or anywhere one time in five. */
@@ -42,9 +76,10 @@ function candidate(
 
 /**
  * A shot for `seat` found by trial: the first of `tries` candidates that
- * scores, else the first that is not a foul. Pure given `rng`, which must
- * return numbers in [0, 1). Meant for test clients, load tests and practice
- * opponents; strength grows with `tries`.
+ * scores, else the first that is not a foul; then played with `aimError`.
+ * Pure given `rng`, which must return numbers in [0, 1). Meant for test
+ * clients, load tests and practice opponents: `tries` is how well the
+ * player reads the table, `aimError` how well they deliver the shot.
  */
 export function suggestShot(
   state: MatchState,
@@ -84,9 +119,12 @@ export function suggestShot(
       continue
     }
     if (threecushion.isPoint(cueBall, events)) {
-      return shot
+      legal = shot
+      break
     }
     legal ??= shot
   }
-  return legal ?? first!
+  const chosen = legal ?? first!
+  const aimError = options.aimError ?? 0
+  return aimError > 0 ? unsteady(chosen, aimError, rng) : chosen
 }

@@ -4,7 +4,7 @@
  * mode relays between the page and a table node over a WebSocket. It is not
  * part of the released bundle.
  *
- *   dev.html?mode=practice&opponent=bot&raceTo=10&locale=tr
+ *   dev.html?mode=practice&opponent=bot&level=easy|normal|hard|pro&raceTo=10&locale=tr
  *   dev.html?mode=free
  *   dev.html?ws=ws://localhost:4400/ws&token=<access token>&table=<tableId>
  *            [&res=<reservation token>] [&spectate] [&log]
@@ -44,6 +44,7 @@ function init() {
     locale: params.get("locale") ?? navigator.language,
     practice: {
       opponent: params.get("opponent") ?? "none",
+      botLevel: params.get("level") ?? "normal",
       raceTo: Number(params.get("raceTo") ?? 10),
     },
     theme: params.has("cloth") ? { cloth: params.get("cloth") } : undefined,

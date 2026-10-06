@@ -20,6 +20,7 @@ import { Bridge } from "./bridge"
 import { Controls } from "./controls"
 import { setLocale } from "./i18n"
 import {
+  BotLevel,
   BRIDGE_VERSION,
   BUNDLE_VERSION,
   CommandName,
@@ -34,6 +35,18 @@ import {
 import { selfCheck } from "./selfcheck"
 import { ShotPlayer } from "./shotplayer"
 import { TableView } from "./tableview"
+
+/**
+ * How the practice bot plays: how many candidate shots it considers and how
+ * steadily it delivers the one it picks (standard deviation of the aiming
+ * error, in degrees). Roughly 0.2, 0.4, 1 and 2.3 points per inning.
+ */
+const BOT_LEVELS: Record<BotLevel, { tries: number; aimError: number }> = {
+  easy: { tries: 40, aimError: 0.5 },
+  normal: { tries: 60, aimError: 0.15 },
+  hard: { tries: 150, aimError: 0.07 },
+  pro: { tries: 150, aimError: 0 },
+}
 
 /** Balls further than this from where the server put them are reported. */
 const DESYNC = 1e-6
@@ -66,6 +79,7 @@ export class Game {
   private mode: Mode | null = null
   private mySeat: Seat | null = null
   private botSeat: Seat | null = null
+  private botLevel: BotLevel = "normal"
   /** what the player has been shown so far */
   private state: MatchState | null = null
   /** practice: the referee's state, ahead of `state` while events play */
@@ -182,6 +196,7 @@ export class Game {
     this.mode = d.mode
     if (d.mode === "practice") {
       this.botSeat = d.practice?.opponent === "bot" ? 1 : null
+      this.botLevel = d.practice?.botLevel ?? "normal"
       this.startPractice(d.practice?.raceTo ?? 10)
     } else if (d.mode === "free") {
       this.startFree()
@@ -631,7 +646,11 @@ export class Game {
       if (this.refereeState !== s || this.mode !== "practice") {
         return
       }
-      const shot = suggestShot(s, seat, Math.random, { tries: 60 })
+      const level = BOT_LEVELS[this.botLevel] ?? BOT_LEVELS.normal
+      const shot = suggestShot(s, seat, Math.random, {
+        tries: level.tries,
+        aimError: (level.aimError * Math.PI) / 180,
+      })
       this.act(seat, { type: "shoot", shotNo: s.shotNo, shot })
     }, 900)
   }
