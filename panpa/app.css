@@ -38,6 +38,7 @@ body {
 }
 
 .controls {
+  touch-action: none;
   position: absolute;
   box-sizing: border-box;
   padding: 4px;

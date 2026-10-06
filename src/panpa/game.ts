@@ -100,6 +100,8 @@ export class Game {
     quality: "mid",
   }
   private hostLayout = false
+  /** where the table is on the page; presses elsewhere are not aiming */
+  private tableRect = { x: 0, y: 0, w: 0, h: 0 }
   private nativeTools = false
   private angle = 0
   private remoteAim: { seat: Seat; angle: number } | null = null
@@ -118,7 +120,8 @@ export class Game {
     this.player = new ShotPlayer(start, true)
     this.view.addTable(this.player.table)
     this.controls = new Controls(host, SHOT_LIMITS, {
-      onChange: () => this.aimChanged(),
+      onChange: () => this.sendAim(),
+      onSide: () => this.sideChanged(),
       onHit: () => this.hit(),
       onRespot: () => this.respot(),
       onCommand: (name) => this.command(name),
@@ -226,6 +229,7 @@ export class Game {
 
   private applyLayout(layout: Layout) {
     this.hostLayout = true
+    this.tableRect = layout.tableArea
     this.view.layout(innerWidth, innerHeight, layout.tableArea)
     this.controls.layout(layout.controlsArea)
     this.controls.layoutTools(layout.tableArea)
@@ -243,6 +247,7 @@ export class Game {
       w: innerWidth - strip - 24,
       h: innerHeight - 16,
     }
+    this.tableRect = tableArea
     this.view.layout(innerWidth, innerHeight, tableArea)
     this.controls.layout({
       x: innerWidth - strip - 8,
@@ -552,7 +557,8 @@ export class Game {
     this.angle = Math.atan2(red.y - from.y, red.x - from.x)
   }
 
-  private aimChanged() {
+  /** Only the side button moves the ball; spin and power never re-aim. */
+  private sideChanged() {
     if (this.state?.opening && this.shooter() !== null) {
       this.placeForTurn()
     }
@@ -740,6 +746,9 @@ export class Game {
       if (active !== null || !e.isPrimary || e.target !== canvas) {
         return
       }
+      if (!this.onTable(e.clientX, e.clientY)) {
+        return
+      }
       active = e.pointerId
       e.preventDefault()
       try {
@@ -782,6 +791,18 @@ export class Game {
     }
     canvas.addEventListener("pointerup", release)
     canvas.addEventListener("pointercancel", release)
+  }
+
+  /** Inside the table's box on the page, with a small margin. */
+  private onTable(px: number, py: number): boolean {
+    const r = this.tableRect
+    const m = 12
+    return (
+      px >= r.x - m &&
+      px <= r.x + r.w + m &&
+      py >= r.y - m &&
+      py <= r.y + r.h + m
+    )
   }
 
   private aimTo(x: number, y: number) {

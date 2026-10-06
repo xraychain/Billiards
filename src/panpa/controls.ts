@@ -3,7 +3,10 @@ import { t, TextKey } from "./i18n"
 import { CommandName, Rect } from "./protocol"
 
 export interface ControlHandlers {
+  /** strike point or power changed */
   onChange(): void
+  /** the side of the cue ball on the starting position changed */
+  onSide(): void
   onHit(): void
   onRespot(): void
   onCommand(name: CommandName): void
@@ -116,7 +119,7 @@ export class Controls {
     this.sideButton.addEventListener("click", () => {
       this.side = this.side === "left" ? "right" : "left"
       this.refreshText()
-      this.handlers.onChange()
+      this.handlers.onSide()
     })
     const names: CommandName[] = ["placeMode", "undo", "repeat", "rerack"]
     for (const name of names) {

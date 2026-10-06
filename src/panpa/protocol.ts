@@ -4,7 +4,7 @@ import { BallState, MatchState, Seat, Shot, Side, Stage } from "../engine/types"
 export const BRIDGE_VERSION = 1
 
 /** Version of the downloadable bundle; bump on every release. */
-export const BUNDLE_VERSION = "0.1.1"
+export const BUNDLE_VERSION = "0.1.2"
 
 export type Mode = "match" | "spectate" | "practice" | "free"
 
