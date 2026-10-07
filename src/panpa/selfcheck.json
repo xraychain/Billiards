@@ -2,7 +2,7 @@
   {
     "state": {
       "v": 2,
-      "engineVersion": "0.5.1",
+      "engineVersion": "0.6.0",
       "config": {
         "ruleType": "threecushion",
         "raceTo": 100,
@@ -52,7 +52,7 @@
   {
     "state": {
       "v": 2,
-      "engineVersion": "0.5.1",
+      "engineVersion": "0.6.0",
       "config": {
         "ruleType": "threecushion",
         "raceTo": 100,
@@ -102,7 +102,7 @@
   {
     "state": {
       "v": 2,
-      "engineVersion": "0.5.1",
+      "engineVersion": "0.6.0",
       "config": {
         "ruleType": "threecushion",
         "raceTo": 100,
@@ -152,7 +152,7 @@
   {
     "state": {
       "v": 2,
-      "engineVersion": "0.5.1",
+      "engineVersion": "0.6.0",
       "config": {
         "ruleType": "threecushion",
         "raceTo": 100,
@@ -202,7 +202,7 @@
   {
     "state": {
       "v": 2,
-      "engineVersion": "0.5.1",
+      "engineVersion": "0.6.0",
       "config": {
         "ruleType": "threecushion",
         "raceTo": 100,
@@ -252,7 +252,7 @@
   {
     "state": {
       "v": 2,
-      "engineVersion": "0.5.1",
+      "engineVersion": "0.6.0",
       "config": {
         "ruleType": "threecushion",
         "raceTo": 100,
@@ -302,7 +302,7 @@
   {
     "state": {
       "v": 2,
-      "engineVersion": "0.5.1",
+      "engineVersion": "0.6.0",
       "config": {
         "ruleType": "threecushion",
         "raceTo": 100,
@@ -352,7 +352,7 @@
   {
     "state": {
       "v": 2,
-      "engineVersion": "0.5.1",
+      "engineVersion": "0.6.0",
       "config": {
         "ruleType": "threecushion",
         "raceTo": 100,
@@ -402,7 +402,7 @@
   {
     "state": {
       "v": 2,
-      "engineVersion": "0.5.1",
+      "engineVersion": "0.6.0",
       "config": {
         "ruleType": "threecushion",
         "raceTo": 2,
@@ -452,7 +452,7 @@
   {
     "state": {
       "v": 2,
-      "engineVersion": "0.5.1",
+      "engineVersion": "0.6.0",
       "config": {
         "ruleType": "threecushion",
         "raceTo": 2,

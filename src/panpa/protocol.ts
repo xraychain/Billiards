@@ -1,10 +1,18 @@
-import { BallState, MatchState, Seat, Shot, Side, Stage } from "../engine/types"
+import {
+  BallState,
+  MatchState,
+  RuleType,
+  Seat,
+  Shot,
+  Side,
+  Stage,
+} from "../engine/types"
 
 /** Version of the host <-> game bridge described in this file. */
 export const BRIDGE_VERSION = 1
 
 /** Version of the downloadable bundle; bump on every release. */
-export const BUNDLE_VERSION = "0.1.4"
+export const BUNDLE_VERSION = "0.2.0"
 
 export type Mode = "match" | "spectate" | "practice" | "free"
 
@@ -48,7 +56,7 @@ export interface PracticeOptions {
 export interface InitMessage extends Partial<Layout> {
   bridgeVersion: number
   mode: Mode
-  ruleType: "threecushion"
+  ruleType: RuleType
   locale?: string
   /** match mode: the seat this player sits in */
   mySeat?: Seat

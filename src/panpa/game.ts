@@ -3,6 +3,7 @@ import {
   createMatch,
   ENGINE_VERSION,
   frozenTo,
+  RULE_TYPES,
   SHOT_LIMITS,
   suggestShot,
 } from "../engine"
@@ -12,6 +13,7 @@ import {
   BallState,
   BilEvent,
   MatchState,
+  RuleType,
   Seat,
   Shot,
   ShotEvent,
@@ -83,7 +85,8 @@ function compatible(a: string, b: string): boolean {
  * local engine in practice) says happened.
  */
 export class Game {
-  private readonly player: ShotPlayer
+  private player: ShotPlayer
+  private ruleType: RuleType = "threecushion"
   private readonly controls: Controls
   private readonly sound = new Sound(true)
   private mode: Mode | null = null
@@ -132,8 +135,7 @@ export class Game {
     private readonly view: TableView,
     host: HTMLElement
   ) {
-    const start = this.newMatch(10).balls
-    this.player = new ShotPlayer(start, true)
+    this.player = new ShotPlayer(this.ruleType, this.newMatch(10).balls, true)
     this.view.addTable(this.player.table)
     this.controls = new Controls(host, SHOT_LIMITS, {
       onChange: () => this.sendAim(),
@@ -206,6 +208,11 @@ export class Game {
       return
     }
     this.reset()
+    if (!RULE_TYPES.includes(d.ruleType)) {
+      this.error("RULE_NOT_SUPPORTED", true, String(d.ruleType))
+      return
+    }
+    this.setRule(d.ruleType)
     setLocale(d.locale)
     this.controls.refreshText()
     this.prefs = { ...this.prefs, ...d.prefs }
@@ -286,9 +293,20 @@ export class Game {
 
   // ---------------------------------------------------------------- modes
 
+  /** Switch disciplines: a table with that discipline's balls. */
+  private setRule(ruleType: RuleType) {
+    if (ruleType === this.ruleType) {
+      return
+    }
+    this.ruleType = ruleType
+    this.view.removeTable(this.player.table)
+    this.player = new ShotPlayer(ruleType, this.newMatch(10).balls, true)
+    this.view.addTable(this.player.table)
+  }
+
   private newMatch(raceTo: number): MatchState {
     return createMatch({
-      ruleType: "threecushion",
+      ruleType: this.ruleType,
       raceTo,
       equalizingInning: true,
       tieBreak: "shootout",
@@ -390,6 +408,9 @@ export class Game {
         `${match.engineVersion} / ${ENGINE_VERSION}`
       )
       return
+    }
+    if (RULE_TYPES.includes(match.config.ruleType)) {
+      this.setRule(match.config.ruleType)
     }
     const first = this.state === null
     this.show(match)

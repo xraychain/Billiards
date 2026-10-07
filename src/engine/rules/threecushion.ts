@@ -3,6 +3,7 @@ import { TableGeometry } from "../../view/tablegeometry"
 import { configure } from "../configure"
 import { seededRandom } from "../random"
 import { BallState, Foul, OutcomeEvent, Side, Vec2 } from "../types"
+import { CaromRules } from "./carom"
 
 export const RED = 2
 
@@ -196,4 +197,25 @@ export function tableInfo() {
     halfWidth: TableGeometry.tableY,
     spots: { top: s.top, centre: s.centre, start: s.start, side: s.side },
   }
+}
+
+export const threeCushionRules: CaromRules = {
+  ruleType: "threecushion",
+  ballCount: 3,
+  openingRules: true,
+  contactRules: true,
+  startingPosition,
+  judge({ cueBall, events, start, opening, frozen }) {
+    const f = foul(cueBall, events, start, opening, frozen)
+    return {
+      points: !f && isPoint(cueBall, events) ? 1 : 0,
+      foul: f,
+      penalty: 0,
+    }
+  },
+  aimTargets(balls, cueBall, opening) {
+    return opening
+      ? [RED]
+      : balls.map((b) => b.id).filter((id) => id !== cueBall)
+  },
 }

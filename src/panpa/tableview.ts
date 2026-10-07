@@ -241,6 +241,13 @@ export class TableView {
     })
   }
 
+  removeTable(table: Table) {
+    table.balls.forEach((b) => {
+      this.scene.remove(b.ballmesh.mesh)
+      this.scene.remove(b.ballmesh.shadow)
+    })
+  }
+
   /** Meshes follow the balls; the flat shadow is pushed aside so it shows. */
   syncBalls(table: Table, seconds: number) {
     const R = this.info.ballRadius

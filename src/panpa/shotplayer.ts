@@ -1,12 +1,12 @@
 import { Vector3 } from "three"
 import { configure } from "../engine/configure"
 import { MAX_SHOT_MS, STEP } from "../engine/simulate"
-import { BallState, Shot } from "../engine/types"
+import { BallState, RuleType, Shot } from "../engine/types"
 import { Ball, State } from "../model/ball"
 import { cueStrike, mathavanAdapter } from "../model/physics/physics"
 import { Table } from "../model/table"
 
-const COLOURS = [0xffffff, 0xffd700, 0xdd1111]
+const COLOURS = [0xffffff, 0xffd700, 0xdd1111, 0xdd1111]
 
 /**
  * The table the player watches. It replays a shot in real time with exactly
@@ -18,8 +18,12 @@ export class ShotPlayer {
   private carry = 0
   playing = false
 
-  constructor(balls: BallState[], textured: boolean) {
-    configure("threecushion")
+  constructor(
+    readonly ruleType: RuleType,
+    balls: BallState[],
+    textured: boolean
+  ) {
+    configure(ruleType)
     Ball.id = 0
     this.table = new Table(
       balls.map(
@@ -51,7 +55,7 @@ export class ShotPlayer {
   }
 
   strike(start: BallState[], cueBall: number, shot: Shot) {
-    configure("threecushion")
+    configure(this.ruleType)
     this.place(start)
     const table = this.table
     table.cueball = table.balls[cueBall]

@@ -6,6 +6,7 @@ export {
   extensionsFor,
   applyAction,
   stateHash,
+  targetFor,
 } from "./match"
 export { simulateShot, STEP, MAX_SHOT_MS } from "./simulate"
 export { configure } from "./configure"

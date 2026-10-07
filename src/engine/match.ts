@@ -1,6 +1,7 @@
 import { maxPower, offCenterLimit } from "../model/physics/constants"
 import { hash } from "./random"
 import * as threecushion from "./rules/threecushion"
+import { rulesFor } from "./rules"
 import { simulateShot } from "./simulate"
 import {
   Action,
@@ -20,9 +21,9 @@ import {
   SimResult,
 } from "./types"
 
-export const ENGINE_VERSION = "0.5.1"
+export const ENGINE_VERSION = "0.6.0"
 
-export const RULE_TYPES: readonly RuleType[] = ["threecushion"]
+export const RULE_TYPES: readonly RuleType[] = ["threecushion", "sagu"]
 
 export const SHOT_LIMITS: ShotLimits = {
   power: [Math.fround(maxPower * 0.02), Math.fround(maxPower)],
@@ -54,6 +55,16 @@ function checkConfig(config: MatchSetup) {
   if (!isInt(config.raceTo, 1, 100)) {
     throw new Error("raceTo must be an integer from 1 to 100")
   }
+  if (
+    config.targets !== undefined &&
+    !(
+      Array.isArray(config.targets) &&
+      config.targets.length === 2 &&
+      config.targets.every((t) => isInt(t, 1, 100))
+    )
+  ) {
+    throw new Error("targets must be two integers from 1 to 100")
+  }
   if (typeof config.equalizingInning !== "boolean") {
     throw new Error("equalizingInning must be a boolean")
   }
@@ -78,6 +89,7 @@ export function createMatch(config: MatchSetup): MatchState {
   checkConfig(config)
   const first = config.firstSeat
   const extensions = config.extensions ?? extensionsFor(config.raceTo)
+  const rules = rulesFor(config.ruleType)
   // art. 23.2: whoever starts plays the white ball, for the whole match
   const cueBallOf: [number, number] = first === 0 ? [0, 1] : [1, 0]
   return {
@@ -86,6 +98,7 @@ export function createMatch(config: MatchSetup): MatchState {
     config: {
       ruleType: config.ruleType,
       raceTo: config.raceTo,
+      ...(config.targets ? { targets: config.targets } : {}),
       equalizingInning: config.equalizingInning,
       tieBreak: config.tieBreak,
       extensions,
@@ -95,11 +108,11 @@ export function createMatch(config: MatchSetup): MatchState {
     },
     phase: "playing",
     stage: "main",
-    balls: threecushion.startingPosition(config.seed, 0, cueBallOf[first]),
+    balls: rules.startingPosition(config.seed, 0, cueBallOf[first]),
     cueBallOf,
     turnSeat: first,
     shotNo: 1,
-    opening: true,
+    opening: rules.openingRules,
     frozen: [],
     scores: [0, 0],
     innings: [0, 0],
@@ -202,23 +215,26 @@ function giveTurn(
 ) {
   state.turnSeat = seat
   state.run = 0
+  const rules = rulesFor(state.config.ruleType)
   if (position) {
-    state.balls = threecushion.startingPosition(
+    state.balls = rules.startingPosition(
       state.config.seed,
       state.rackNo++,
       state.cueBallOf[seat]
     )
     events.push({ type: "position", reason: position, balls: state.balls })
   }
-  state.opening = position !== undefined
+  state.opening = position !== undefined && rules.openingRules
   announceTurn(state, events)
 }
 
 function announceTurn(state: MatchState, events: BilEvent[]) {
   const seat = state.turnSeat
-  state.frozen = state.opening
-    ? []
-    : threecushion.frozenTo(state.balls, state.cueBallOf[seat])
+  const rules = rulesFor(state.config.ruleType)
+  state.frozen =
+    state.opening || !rules.contactRules
+      ? []
+      : threecushion.frozenTo(state.balls, state.cueBallOf[seat])
   events.push({
     type: "turn",
     seat,
@@ -229,9 +245,14 @@ function announceTurn(state: MatchState, events: BilEvent[]) {
   })
 }
 
+/** The score that wins for `seat`: the handicap target, else raceTo. */
+export function targetFor(state: MatchState, seat: Seat): number {
+  return state.config.targets?.[seat] ?? state.config.raceTo
+}
+
 /** A point in the main stage. Returns true when it finished the stage. */
 function reachedTarget(state: MatchState, seat: Seat, events: BilEvent[]) {
-  if (state.scores[seat] < state.config.raceTo) {
+  if (state.scores[seat] < targetFor(state, seat)) {
     return false
   }
   state.innings[seat]++
@@ -329,7 +350,7 @@ function scored(state: MatchState, seat: Seat, events: BilEvent[]) {
   }
   if (
     state.stage === "equalizing" &&
-    state.scores[seat] >= state.config.raceTo
+    state.scores[seat] >= targetFor(state, seat)
   ) {
     levelled(state, events)
     return
@@ -366,14 +387,16 @@ function shoot(
     return fail("SIM_FAILED", e instanceof Error ? e.message : String(e))
   }
 
-  const foul = threecushion.foul(
+  const { points, foul, penalty } = rulesFor(state.config.ruleType).judge({
     cueBall,
-    sim.events,
+    opponentBall: state.cueBallOf[other(seat)],
+    events: sim.events,
     start,
-    state.opening,
-    state.frozen
-  )
-  const points = !foul && threecushion.isPoint(cueBall, sim.events) ? 1 : 0
+    opening: state.opening,
+    frozen: state.frozen,
+    score: state.scores[seat],
+    target: targetFor(state, seat),
+  })
   const shotEvent: ShotEvent = {
     type: "shot",
     shotNo: state.shotNo,
@@ -384,7 +407,7 @@ function shoot(
     start,
     final: sim.final,
     durationMs: sim.durationMs,
-    outcome: { events: sim.events, points, foul },
+    outcome: { events: sim.events, points, foul, penalty },
     scores: [0, 0],
     stateHash: "",
   }
@@ -393,6 +416,9 @@ function shoot(
   state.timeouts[seat] = 0
   state.extensionsOnShot = 0
   state.shotNo++
+  if (penalty > 0 && state.stage !== "shootout") {
+    state.scores[seat] = Math.max(0, state.scores[seat] - penalty)
+  }
   if (points > 0) {
     scored(state, seat, events)
   } else {
@@ -405,6 +431,9 @@ function shoot(
 
 function respot(state: MatchState, seat: Seat): ActionResult {
   if (state.frozen.length === 0) {
+    return fail("ILLEGAL_ACTION", "respot")
+  }
+  if (!rulesFor(state.config.ruleType).contactRules) {
     return fail("ILLEGAL_ACTION", "respot")
   }
   const events: BilEvent[] = []

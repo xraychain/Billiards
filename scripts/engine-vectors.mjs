@@ -11,6 +11,13 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 
 const FILE = "vectors/threecushion.json"
+/** every discipline gets its own golden file */
+const RULE_FILES = {
+  threecushion: "vectors/threecushion.json",
+  sagu: "vectors/sagu.json",
+}
+/** the discipline being generated; set by `gen` per file */
+let RULE = "threecushion"
 const HEAVY_FILE = "vectors/threecushion-heavy.json"
 const SELFCHECK_FILE = "src/panpa/selfcheck.json"
 const JSC =
@@ -38,7 +45,7 @@ function randomShot(E, random) {
 
 function newMatch(E, seed, firstSeat, overrides = {}) {
   return E.createMatch({
-    ruleType: "threecushion",
+    ruleType: RULE,
     raceTo: 100,
     equalizingInning: true,
     tieBreak: "shootout",
@@ -270,12 +277,18 @@ const E = await import("../engine-dist/index.mjs")
 
 if (mode === "gen") {
   mkdirSync("vectors", { recursive: true })
-  const vectors = generate(E, 20, 15)
-  writeFileSync(
-    FILE,
-    JSON.stringify({ engineVersion: E.ENGINE_VERSION, vectors }) + "\n"
-  )
-  console.log(`${vectors.length} vectors -> ${FILE}`)
+  let vectors = []
+  for (const [rule, file] of Object.entries(RULE_FILES)) {
+    RULE = rule
+    const made = generate(E, rule === "threecushion" ? 20 : 12, 15)
+    writeFileSync(
+      file,
+      JSON.stringify({ engineVersion: E.ENGINE_VERSION, vectors: made }) + "\n"
+    )
+    console.log(`${made.length} ${rule} vectors -> ${file}`)
+    if (rule === "threecushion") vectors = made
+  }
+  RULE = "threecushion"
   // A few shots for the web view to replay when it loads, proving that the
   // JS engine of that device computes what the server computes.
   const shots = vectors
@@ -292,7 +305,7 @@ if (mode === "gen") {
   console.log(`${shots.length} self-check shots -> ${SELFCHECK_FILE}`)
 } else if (mode === "check") {
   let ok = true
-  for (const file of [FILE, HEAVY_FILE]) {
+  for (const file of [...Object.values(RULE_FILES), HEAVY_FILE]) {
     const { vectors } = JSON.parse(readFileSync(file, "utf8"))
     ok = report(`node ${file}`, replay(E, vectors)) && ok
   }
@@ -342,19 +355,27 @@ if (mode === "gen") {
   writeFileSync(
     script,
     readFileSync("engine-dist/index.iife.js", "utf8") +
-      `\nvar data = ${readFileSync(FILE, "utf8")};\n` +
+      Object.values(RULE_FILES)
+        .map((f, i) => `\nvar data${i} = ${readFileSync(f, "utf8")};\n`)
+        .join("") +
       replay.toString() +
-      "\nprint(JSON.stringify(replay(BilliardsEngine, data.vectors)));\n"
+      `\nprint(JSON.stringify([${Object.values(RULE_FILES)
+        .map((_, i) => `replay(BilliardsEngine, data${i}.vectors)`)
+        .join(", ")}]));\n`
   )
   const out = execFileSync(JSC, [script], {
     encoding: "utf8",
     maxBuffer: 1 << 26,
   })
-  const r = JSON.parse(out.trim().split("\n").pop())
-  if (!report("jsc", r)) {
-    console.log("worst:", JSON.stringify(r.worst))
-    process.exit(1)
-  }
+  const results = JSON.parse(out.trim().split("\n").pop())
+  let ok = true
+  Object.keys(RULE_FILES).forEach((rule, i) => {
+    if (!report(`jsc ${rule}`, results[i])) {
+      console.log("worst:", JSON.stringify(results[i].worst))
+      ok = false
+    }
+  })
+  if (!ok) process.exit(1)
 } else if (mode === "bench") {
   const vectors = []
   randomMatches(E, lcg(7), vectors, 40, 30)

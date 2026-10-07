@@ -5,6 +5,7 @@
  * part of the released bundle.
  *
  *   dev.html?mode=practice&opponent=bot&level=easy|normal|hard|pro&raceTo=10&locale=tr
+ *   dev.html?mode=practice&rule=sagu
  *   dev.html?mode=free
  *   dev.html?ws=ws://localhost:4400/ws&token=<access token>&table=<tableId>
  *            [&res=<reservation token>] [&spectate] [&log]
@@ -40,7 +41,7 @@ function init() {
   toGame("game.init", {
     bridgeVersion: 1,
     mode,
-    ruleType: "threecushion",
+    ruleType: params.get("rule") ?? "threecushion",
     locale: params.get("locale") ?? navigator.language,
     practice: {
       opponent: params.get("opponent") ?? "none",

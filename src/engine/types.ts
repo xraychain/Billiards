@@ -5,7 +5,7 @@
 
 export type Seat = 0 | 1
 
-export type RuleType = "threecushion"
+export type RuleType = "threecushion" | "sagu"
 
 export interface Vec2 {
   x: number
@@ -33,6 +33,8 @@ export interface MatchConfig {
   ruleType: RuleType
   /** points needed to win, 1..100 */
   raceTo: number
+  /** handicap: a different target per seat (sagu); raceTo for both when absent */
+  targets?: [number, number]
   /**
    * UMB art. 29.4: when the starting player reaches the target, the opponent
    * plays one more inning from the starting position to level the innings.
@@ -128,8 +130,11 @@ export interface OutcomeEvent {
  * redFirst: a shot from the starting position did not go directly to the red
  * ballInContact: played straight into a ball the cue ball was touching
  * cushionInContact: played straight into a cushion the cue ball was touching
+ * opponentBall: the cue ball touched the opponent's cue ball (sagu)
+ * noBall: the cue ball touched no ball at all (sagu)
  */
-export type Foul = "redFirst" | "ballInContact" | "cushionInContact"
+export type Foul =
+  "redFirst" | "ballInContact" | "cushionInContact" | "opponentBall" | "noBall"
 
 export interface ShotEvent {
   type: "shot"
@@ -142,7 +147,13 @@ export interface ShotEvent {
   start: BallState[]
   final: BallState[]
   durationMs: number
-  outcome: { events: OutcomeEvent[]; points: number; foul: Foul | null }
+  /** `penalty`: points taken off the shooter's score for the foul */
+  outcome: {
+    events: OutcomeEvent[]
+    points: number
+    foul: Foul | null
+    penalty: number
+  }
   scores: [number, number]
   stateHash: string
 }

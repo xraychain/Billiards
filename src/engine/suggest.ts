@@ -1,5 +1,6 @@
+import { rulesFor } from "./rules"
 import * as threecushion from "./rules/threecushion"
-import { SHOT_LIMITS } from "./match"
+import { SHOT_LIMITS, targetFor } from "./match"
 import { simulateShot } from "./simulate"
 import { BallState, MatchState, Seat, Shot } from "./types"
 
@@ -88,10 +89,18 @@ export function suggestShot(
   options: SuggestOptions = {}
 ): Shot {
   const tries = Math.max(1, options.tries ?? 150)
+  const rules = rulesFor(state.config.ruleType)
   const cueBall = state.cueBallOf[seat]
-  const others = state.balls.map((b) => b.id).filter((id) => id !== cueBall)
-  // a shot from the starting position must go to the red
-  const targets = state.opening ? [threecushion.RED] : others
+  const targets = rules.aimTargets(state.balls, cueBall, state.opening)
+  const judgeInput = {
+    cueBall,
+    opponentBall: state.cueBallOf[seat === 0 ? 1 : 0],
+    start: state.balls,
+    opening: state.opening,
+    frozen: state.frozen,
+    score: state.scores[seat],
+    target: targetFor(state, seat),
+  }
   let legal: Shot | undefined
   let first: Shot | undefined
   for (let n = 0; n < tries; n++) {
@@ -108,17 +117,11 @@ export function suggestShot(
     } catch {
       continue
     }
-    const foul = threecushion.foul(
-      cueBall,
-      events,
-      state.balls,
-      state.opening,
-      state.frozen
-    )
-    if (foul) {
+    const verdict = rules.judge({ ...judgeInput, events })
+    if (verdict.foul) {
       continue
     }
-    if (threecushion.isPoint(cueBall, events)) {
+    if (verdict.points > 0) {
       legal = shot
       break
     }

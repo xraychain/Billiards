@@ -11,7 +11,7 @@ describe("panpa shot player", () => {
     .map((v) => v.expected.events[0])
 
   it("comes to rest exactly where the engine says, in uneven frames", () => {
-    const player = new ShotPlayer(shots[0].start, false)
+    const player = new ShotPlayer("threecushion", shots[0].start, false)
     // frame times a display would produce: 60 Hz, a hitch, 120 Hz
     const frames = [1 / 60, 0.1, 1 / 120, 0.033, 0.0041]
     for (const shot of shots) {
@@ -27,7 +27,7 @@ describe("panpa shot player", () => {
   })
 
   it("places balls at rest", () => {
-    const player = new ShotPlayer(shots[0].start, false)
+    const player = new ShotPlayer("threecushion", shots[0].start, false)
     player.strike(shots[0].start, shots[0].cueBall, shots[0].shot)
     player.advance(0.2)
     player.place(shots[1].start)
