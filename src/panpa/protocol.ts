@@ -13,7 +13,7 @@ import {
 export const BRIDGE_VERSION = 1
 
 /** Version of the downloadable bundle; bump on every release. */
-export const BUNDLE_VERSION = "0.2.0"
+export const BUNDLE_VERSION = "0.2.1"
 
 export type Mode = "match" | "spectate" | "practice" | "free"
 
@@ -52,6 +52,20 @@ export interface PracticeOptions {
   opponent?: "none" | "bot"
   /** how well the bot plays; "normal" when omitted */
   botLevel?: BotLevel
+  /** shot clock in seconds for the player; 0 or absent = no clock */
+  shotClockSec?: number
+}
+
+/** The last completed shot or time foul, for the host's strip. */
+export interface LastShot {
+  seat: Seat
+  points: number
+  /** engine foul code, or "timeout" for a time foul */
+  foul: string | null
+  /** points taken off (sagu) */
+  penalty: number
+  /** epoch ms */
+  at: number
 }
 
 export interface InitMessage extends Partial<Layout> {
@@ -99,6 +113,9 @@ export interface Hud {
   result: MatchState["result"]
   /** practice/free commands that would do something right now */
   commands: CommandName[]
+  /** practice: the package's own shot clock, when one is running */
+  clock: { deadlineMs: number; shotClockSec: number } | null
+  lastShot: LastShot | null
   /** pool disciplines */
   pool?: {
     racks: [number, number]

@@ -31,6 +31,7 @@ import {
   BRIDGE_VERSION,
   BUNDLE_VERSION,
   CommandName,
+  LastShot,
   HostMessage,
   Hud,
   InitMessage,
@@ -137,6 +138,11 @@ export class Game {
   private cueBefore: BallState[] | null = null
   /** practice bot / auto-play: the cue ball has been put down for this shot */
   private cuePlaced = false
+  /** practice: shot clock length; 0 = none */
+  private shotClockSec = 0
+  /** practice: when the running clock expires (epoch ms), if running */
+  private clockDeadline: number | null = null
+  private lastShot: LastShot | null = null
   /** pool, 8-ball: the ball tapped for the call, waiting for a pocket */
   private callBall: number | null = null
   /** pool, 9-ball: the next shot is a push-out */
@@ -238,6 +244,10 @@ export class Game {
     if (d.mode === "practice") {
       this.botSeat = d.practice?.opponent === "bot" ? 1 : null
       this.botLevel = d.practice?.botLevel ?? "normal"
+      this.shotClockSec = Math.max(
+        0,
+        Math.min(300, d.practice?.shotClockSec ?? 0)
+      )
       this.startPractice(d.practice?.raceTo ?? 10)
     } else if (d.mode === "free") {
       this.startFree()
@@ -337,6 +347,8 @@ export class Game {
   private startPractice(raceTo: number) {
     this.history = []
     this.lastPlayed = null
+    this.lastShot = null
+    this.clockDeadline = null
     this.placing = false
     this.refereeState = this.newMatch(Math.min(100, Math.max(1, raceTo)))
     this.refereeShown = false
@@ -517,6 +529,15 @@ export class Game {
           state.innings[timedOut.seat as Seat]++
           state.run = 0
         }
+        if (timedOut) {
+          this.lastShot = {
+            seat: timedOut.seat,
+            points: 0,
+            foul: "timeout",
+            penalty: 0,
+            at: Date.now(),
+          }
+        }
         state.turnSeat = event.seat
         state.shotNo = event.shotNo
         state.stage = event.stage
@@ -539,6 +560,19 @@ export class Game {
       }
       case "extension":
         state.extensionsLeft[event.seat] = event.left
+        if (this.shotClockSec > 0) {
+          // the clock was extended by one more clock length
+          this.clockDeadline = Date.now() + this.shotClockSec * 1000
+        }
+        break
+      case "timeout":
+        this.lastShot = {
+          seat: event.seat,
+          points: 0,
+          foul: "timeout",
+          penalty: 0,
+          at: Date.now(),
+        }
         break
       case "shootout":
         state.shootout = { round: event.round, runs: event.runs }
@@ -572,6 +606,13 @@ export class Game {
       this.error("DESYNC", false, off.toExponential(2))
     }
     this.player.place(event.final)
+    this.lastShot = {
+      seat: event.seat,
+      points: event.outcome.points,
+      foul: event.outcome.foul,
+      penalty: event.outcome.penalty ?? 0,
+      at: Date.now(),
+    }
     const s = this.state
     if (s) {
       s.balls = event.final
@@ -1321,6 +1362,7 @@ export class Game {
     const commands = this.commands()
     this.controls.setTools(commands, this.placing, !this.nativeTools)
     this.controls.setPrompt(this.poolPrompt(seat))
+    this.runClock(seat)
     this.view.showKitchen(
       this.inHand() && this.pool()?.ballInHand === "kitchen"
     )
@@ -1345,6 +1387,11 @@ export class Game {
       shootout: s?.shootout ?? null,
       result: s?.result ?? null,
       commands,
+      clock:
+        this.clockDeadline !== null
+          ? { deadlineMs: this.clockDeadline, shotClockSec: this.shotClockSec }
+          : null,
+      lastShot: this.lastShot,
     }
     if (s?.pool) {
       hud.pool = {
@@ -1370,6 +1417,39 @@ export class Game {
   }
 
   private lastHud = ""
+
+  /**
+   * Practice: the package keeps a shot clock for the player. It starts when
+   * the player may shoot and is dropped when the shot goes; on expiry the
+   * engine's time rules apply (time-out first, then the time foul).
+   */
+  private runClock(seat: Seat | null) {
+    if (this.mode !== "practice" || this.shotClockSec <= 0) {
+      this.clockDeadline = null
+      return
+    }
+    const running = seat !== null && !this.placing
+    if (!running) {
+      this.clockDeadline = null
+      return
+    }
+    if (this.clockDeadline === null) {
+      this.clockDeadline = Date.now() + this.shotClockSec * 1000
+    }
+  }
+
+  /** Called every frame: a practice clock that ran out is a time foul. */
+  private tickClock() {
+    if (this.clockDeadline === null || Date.now() < this.clockDeadline) {
+      return
+    }
+    const seat = this.shooter()
+    this.clockDeadline = null
+    if (seat === null || !this.refereeState) {
+      return
+    }
+    this.act(seat, { type: "timeout" })
+  }
 
   /** What the pool rules want from the player right now, as a prompt. */
   private poolPrompt(seat: Seat | null): Prompt | null {
@@ -1404,6 +1484,7 @@ export class Game {
     if (this.paused) {
       return
     }
+    this.tickClock()
     const wasPlaying = this.player.playing
     const rested = this.player.advance(seconds)
     if (wasPlaying && this.prefs.sound) {

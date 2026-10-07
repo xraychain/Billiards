@@ -102,8 +102,6 @@ export class Controls {
   private readonly prompt: HTMLElement
   private readonly promptText: HTMLElement
   private readonly promptButtons: HTMLElement
-  private readonly debug: HTMLElement
-  private lastEvent = "-"
   private readonly thickness: HTMLElement
   private readonly thicknessObject: HTMLElement
   private readonly thicknessValue: HTMLElement
@@ -127,7 +125,6 @@ export class Controls {
     this.promptText = el("div", "prompt-text", this.prompt)
     this.promptButtons = el("div", "prompt-buttons", this.prompt)
     this.prompt.hidden = true
-    this.debug = el("div", "debug", this.root)
     this.thickness = el("div", "thickness", host)
     const balls = el("div", "thickness-balls", this.thickness)
     this.thicknessObject = el("div", "thickness-object", balls)
@@ -137,31 +134,6 @@ export class Controls {
 
     drag(this.pad, (e) => this.movePad(e))
     drag(this.bar, (e) => this.moveBar(e))
-    // temporary: what the device does to the pad, for the first iPhone tests
-    for (const type of [
-      "pointerdown",
-      "pointerup",
-      "pointercancel",
-      "touchstart",
-      "touchend",
-      "touchcancel",
-      "contextmenu",
-      "focusin",
-    ]) {
-      this.pad.addEventListener(type, (e) => {
-        this.lastEvent = `${type}${e.target === this.tip ? "@tip" : ""}`
-        this.updateDebug()
-      })
-    }
-    globalThis.visualViewport?.addEventListener("resize", () => {
-      this.lastEvent = "vv.resize"
-      this.updateDebug()
-    })
-    globalThis.visualViewport?.addEventListener("scroll", () => {
-      this.lastEvent = "vv.scroll"
-      this.updateDebug()
-    })
-    setInterval(() => this.updateDebug(), 500)
     for (const node of [this.root, this.tools]) {
       node.addEventListener("pointerdown", (e) => e.stopPropagation())
     }
@@ -206,17 +178,6 @@ export class Controls {
     const tip = Math.round(pad * 0.22)
     this.tip.style.width = `${tip}px`
     this.tip.style.height = `${tip}px`
-  }
-
-  private updateDebug() {
-    const p = this.pad.getBoundingClientRect()
-    const t = this.tip.getBoundingClientRect()
-    const vv = globalThis.visualViewport
-    this.debug.textContent =
-      `pad ${p.width.toFixed(0)}×${p.height.toFixed(0)} ` +
-      `tip ${t.width.toFixed(1)}×${t.height.toFixed(1)} ` +
-      `dpr ${(globalThis.devicePixelRatio || 1).toFixed(2)} ` +
-      `vv ${vv ? vv.scale.toFixed(2) : "-"} ${this.lastEvent}`
   }
 
   /** Practice and free play buttons, along the top of the table area. */

@@ -46,6 +46,7 @@ function init() {
     practice: {
       opponent: params.get("opponent") ?? "none",
       botLevel: params.get("level") ?? "normal",
+      shotClockSec: Number(params.get("clock") ?? 0),
       raceTo: Number(params.get("raceTo") ?? 10),
     },
     theme: params.has("cloth") ? { cloth: params.get("cloth") } : undefined,
