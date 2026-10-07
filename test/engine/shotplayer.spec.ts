@@ -2,6 +2,7 @@ import { expect } from "chai"
 import { MatchState } from "../../src/engine/types"
 import { selfCheck } from "../../src/panpa/selfcheck"
 import { ShotPlayer } from "../../src/panpa/shotplayer"
+import nineball from "../../vectors/nineball.json"
 import golden from "../../vectors/threecushion.json"
 
 describe("panpa shot player", () => {
@@ -23,6 +24,26 @@ describe("panpa shot player", () => {
       expect(rested).to.equal(true)
       expect(player.deviation(shot.final)).to.equal(0)
       expect(player.positions()).to.deep.equal(shot.final)
+    }
+  })
+
+  it("pool breaks and pots rest where the engine says, pocketed balls included", () => {
+    const pool = (nineball.vectors as any[])
+      .filter((v) => v.expected.ok && v.expected.events[0]?.type === "shot")
+      .filter((_, i) => i % 6 === 0)
+      .map((v) => v.expected.events[0])
+    const player = new ShotPlayer("nineball", pool[0].start, false)
+    for (const shot of pool) {
+      player.strike(shot.start, shot.cueBall, shot.shot)
+      let rested = false
+      for (let i = 0; i < 400000 && !rested; i++) {
+        rested = player.advance(1 / 60)
+      }
+      expect(rested).to.equal(true)
+      expect(player.deviation(shot.final)).to.equal(0)
+      expect(player.positions().map((b) => !!b.pocketed)).to.deep.equal(
+        shot.final.map((b) => !!b.pocketed)
+      )
     }
   })
 

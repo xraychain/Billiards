@@ -5,6 +5,7 @@ import {
   frozenTo,
   RULE_TYPES,
   SHOT_LIMITS,
+  suggestCall,
   suggestShot,
 } from "../engine"
 import { chooseSide } from "../engine/rules/threecushion"
@@ -13,6 +14,7 @@ import {
   BallState,
   BilEvent,
   MatchState,
+  PoolState,
   RuleType,
   Seat,
   Shot,
@@ -22,8 +24,8 @@ import { Overlap } from "../utils/overlap"
 import { unitAtAngle } from "../utils/three-utils"
 import { Sound } from "../view/sound"
 import { Bridge } from "./bridge"
-import { Controls } from "./controls"
-import { setLocale } from "./i18n"
+import { Controls, Prompt } from "./controls"
+import { setLocale, t } from "./i18n"
 import {
   BotLevel,
   BRIDGE_VERSION,
@@ -129,6 +131,16 @@ export class Game {
   private sendId = 0
   private dragBall: number | null = null
   private dragMoved = false
+  /** pool: the cue ball is being carried by hand */
+  private carryingCue = false
+  /** match: where the balls were before a placement the server may refuse */
+  private cueBefore: BallState[] | null = null
+  /** practice bot / auto-play: the cue ball has been put down for this shot */
+  private cuePlaced = false
+  /** pool, 8-ball: the ball tapped for the call, waiting for a pocket */
+  private callBall: number | null = null
+  /** pool, 9-ball: the next shot is a push-out */
+  private pushOut = false
 
   constructor(
     private readonly bridge: Bridge,
@@ -143,6 +155,7 @@ export class Game {
       onHit: () => this.hit(),
       onRespot: () => this.respot(),
       onCommand: (name) => this.command(name),
+      onPrompt: (id) => this.prompt(id),
     })
     this.bindPointer(view.canvas)
     globalThis.addEventListener("resize", () => this.resized())
@@ -300,8 +313,13 @@ export class Game {
     }
     this.ruleType = ruleType
     this.view.removeTable(this.player.table)
+    this.view.setRule(ruleType)
     this.player = new ShotPlayer(ruleType, this.newMatch(10).balls, true)
     this.view.addTable(this.player.table)
+  }
+
+  private pool(): PoolState | null {
+    return this.state?.pool ?? null
   }
 
   private newMatch(raceTo: number): MatchState {
@@ -383,9 +401,22 @@ export class Game {
           this.remoteAim = { seat: d.seat, angle: d.angle }
         }
         break
+      case "ack":
+        if (frame.id && frame.id === this.pending) {
+          this.pending = null
+          this.cueBefore = null
+          this.refresh()
+        }
+        break
       case "err":
         if (frame.id && frame.id === this.pending) {
           this.pending = null
+          if (this.cueBefore && this.state) {
+            // the referee refused the spot: the cue ball goes back
+            this.state.balls = this.cueBefore
+            this.player.place(this.cueBefore)
+            this.cueBefore = null
+          }
           this.error(d?.code ?? "REJECTED", false, d?.reason)
           this.refresh()
         }
@@ -491,6 +522,17 @@ export class Game {
         state.stage = event.stage
         state.opening = event.opening
         state.frozen = event.frozen
+        if (state.pool) {
+          const pool = state.pool
+          pool.ballInHand = event.ballInHand ?? "none"
+          pool.breakShot = event.breakShot ?? false
+          pool.pushOutAvailable = event.pushOutAvailable ?? false
+          pool.pendingChoice = event.pendingChoice ?? null
+          pool.call = null
+          this.callBall = null
+          this.pushOut = false
+          this.cuePlaced = false
+        }
         this.controls.resetSpin()
         this.placeForTurn()
         break
@@ -500,6 +542,18 @@ export class Game {
         break
       case "shootout":
         state.shootout = { round: event.round, runs: event.runs }
+        break
+      case "rackEnd":
+        state.scores = event.racks
+        if (this.prefs.haptics) {
+          this.bridge.send({ t: "game.haptic", d: { kind: "point" } })
+        }
+        break
+      case "placed":
+        state.balls = state.balls.map((b) =>
+          b.id === event.ball ? { id: b.id, x: event.pos.x, y: event.pos.y } : b
+        )
+        this.player.moveBall(event.ball, event.pos.x, event.pos.y)
         break
       case "matchEnd":
         state.phase = "ended"
@@ -588,11 +642,12 @@ export class Game {
         ? chooseSide(s.balls, s.cueBallOf[seat], this.controls.side)
         : s.balls
     this.player.place(balls)
-    if (seat !== null && s.opening) {
+    if (seat !== null && (s.opening || s.pool?.breakShot)) {
       this.aimAtRed()
     }
   }
 
+  /** Carom: the red; pool: the lowest ball on the table. */
   private aimAtRed() {
     const cueBall = this.cueBall()
     if (cueBall === null) {
@@ -600,8 +655,13 @@ export class Game {
     }
     const balls = this.player.table.balls
     const from = balls[cueBall].pos
-    const red = balls[2].pos
-    this.angle = Math.atan2(red.y - from.y, red.x - from.x)
+    const target = this.state?.pool
+      ? balls.find((b) => b.id > 0 && b.onTable())
+      : balls[2]
+    if (!target) {
+      return
+    }
+    this.angle = Math.atan2(target.pos.y - from.y, target.pos.x - from.x)
   }
 
   /** Only the side button moves the ball; spin and power never re-aim. */
@@ -654,13 +714,102 @@ export class Game {
     if (s.opening) {
       action.side = this.controls.side
     }
+    if (s.pool && this.pushOut) {
+      action.pushOut = true
+    }
+    if (this.mustCall()) {
+      return
+    }
     this.bridge.send({ t: "game.haptic", d: { kind: "hit" } })
     this.act(seat, action)
+  }
+
+  /** 8-ball: a call is owed before this shot. */
+  private mustCall(): boolean {
+    const pool = this.pool()
+    return (
+      this.ruleType === "eightball" &&
+      !!pool &&
+      !pool.breakShot &&
+      pool.pendingChoice === null &&
+      pool.call === null
+    )
+  }
+
+  /** A pool decision button: a pending choice, a safety call or push-out. */
+  private prompt(id: string) {
+    const seat = this.shooter()
+    const s = this.state
+    if (seat === null || !s?.pool) {
+      return
+    }
+    const pool = s.pool
+    if (pool.pendingChoice) {
+      if (pool.pendingChoice.options.includes(id)) {
+        this.act(seat, { type: "choice", shotNo: s.shotNo, option: id })
+      }
+      return
+    }
+    if (id === "safety") {
+      this.callBall = null
+      this.act(seat, { type: "call", shotNo: s.shotNo, safety: true })
+    } else if (id === "pushOut") {
+      this.pushOut = !this.pushOut
+      this.refresh()
+    }
+  }
+
+  /** 8-ball: a tap on a ball or a pocket while a call is owed. */
+  private callAt(p: { x: number; y: number }): boolean {
+    const seat = this.shooter()
+    const s = this.state
+    if (seat === null || !s || !this.mustCall()) {
+      return false
+    }
+    const pocket = this.view.pocketAt(p)
+    if (pocket !== null && this.callBall !== null) {
+      this.act(seat, {
+        type: "call",
+        shotNo: s.shotNo,
+        ball: this.callBall,
+        pocket,
+      })
+      return true
+    }
+    const ball = this.ballAt(p.x, p.y)
+    if (ball !== null && ball !== 0) {
+      this.callBall = ball
+      this.refresh()
+      return true
+    }
+    return false
   }
 
   /** Dev host only: play the suggested shot (or a random one in free play). */
   autoHit() {
     const seat = this.shooter()
+    if (seat !== null && this.state?.pool) {
+      const s = this.refereeState ?? this.state
+      if (this.mode === "practice" && this.botPoolStep(s, seat)) {
+        // a placement or a choice was made; shoot once it has been shown
+        setTimeout(() => this.autoHit(), 600)
+        return
+      }
+      if (this.mustCall()) {
+        const shot = suggestShot(s, seat, Math.random, { tries: 40 })
+        const call = suggestCall(s, seat, shot)
+        this.act(
+          seat,
+          call === "safety"
+            ? { type: "call", shotNo: s.shotNo, safety: true }
+            : { type: "call", shotNo: s.shotNo, ...call }
+        )
+        this.angle = shot.angle
+        this.controls.setShot(shot, SHOT_LIMITS)
+        this.hit()
+        return
+      }
+    }
     if (seat !== null && this.state) {
       const shot = suggestShot(this.state, seat, Math.random, { tries: 40 })
       this.angle = shot.angle
@@ -684,15 +833,7 @@ export class Game {
   /** Hand an action to the referee: the server, or the engine in practice. */
   private act(seat: Seat, action: Action) {
     if (this.mode === "match") {
-      if (action.type === "shoot") {
-        const d: any = { shotNo: action.shotNo, shot: action.shot }
-        if (action.side) {
-          d.side = action.side
-        }
-        this.pending = this.netSend("bil.shoot", d)
-      } else if (action.type === "respot") {
-        this.pending = this.netSend("bil.respot", { shotNo: action.shotNo })
-      }
+      this.sendAction(action)
       this.refresh()
       return
     }
@@ -713,6 +854,52 @@ export class Game {
     this.refresh()
   }
 
+  /** Match: the action as a table message; calls take effect at once. */
+  private sendAction(action: Action) {
+    const pool = this.pool()
+    switch (action.type) {
+      case "shoot": {
+        const d: any = { shotNo: action.shotNo, shot: action.shot }
+        if (action.side) d.side = action.side
+        if (action.pushOut) d.pushOut = true
+        this.pending = this.netSend("bil.shoot", d)
+        break
+      }
+      case "respot":
+        this.pending = this.netSend("bil.respot", { shotNo: action.shotNo })
+        break
+      case "placeBall":
+        this.pending = this.netSend("bil.placeBall", {
+          shotNo: action.shotNo,
+          pos: action.pos,
+        })
+        break
+      case "call":
+        this.netSend(
+          "bil.call",
+          action.safety
+            ? { shotNo: action.shotNo, safety: true }
+            : {
+                shotNo: action.shotNo,
+                ball: action.ball,
+                pocket: action.pocket,
+              }
+        )
+        if (pool) {
+          pool.call = action.safety
+            ? "safety"
+            : { ball: action.ball!, pocket: action.pocket! }
+        }
+        break
+      case "choice":
+        this.pending = this.netSend("bil.choice", {
+          shotNo: action.shotNo,
+          option: action.option,
+        })
+        break
+    }
+  }
+
   private botTurn() {
     const s = this.refereeState
     if (!s || s.phase !== "playing" || s.turnSeat !== this.botSeat) {
@@ -727,12 +914,67 @@ export class Game {
         return
       }
       const level = BOT_LEVELS[this.botLevel] ?? BOT_LEVELS.normal
+      if (s.pool && this.botPoolStep(s, seat)) {
+        return
+      }
       const shot = suggestShot(s, seat, Math.random, {
         tries: level.tries,
         aimError: (level.aimError * Math.PI) / 180,
       })
-      this.act(seat, { type: "shoot", shotNo: s.shotNo, shot })
+      if (s.pool && this.ruleType === "eightball" && !s.pool.breakShot) {
+        const call = suggestCall(s, seat, shot)
+        this.act(
+          seat,
+          call === "safety"
+            ? { type: "call", shotNo: s.shotNo, safety: true }
+            : { type: "call", shotNo: s.shotNo, ...call }
+        )
+      }
+      this.act(seat, { type: "shoot", shotNo: this.refereeState!.shotNo, shot })
     }, 900)
+  }
+
+  /** Pool bot: answer a choice or put the cue ball somewhere; true if it did. */
+  private botPoolStep(s: MatchState, seat: Seat): boolean {
+    const pool = s.pool!
+    if (pool.pendingChoice) {
+      this.act(seat, {
+        type: "choice",
+        shotNo: s.shotNo,
+        option: pool.pendingChoice.options[0],
+      })
+      return true
+    }
+    if (pool.ballInHand !== "none" && !this.cuePlaced) {
+      const { halfLength, halfWidth } = this.view.bounds
+      for (let k = 0; k < 40; k++) {
+        const pos =
+          pool.ballInHand === "kitchen"
+            ? {
+                x:
+                  -halfLength +
+                  Math.random() * (this.view.headString + halfLength - 0.01),
+                y: (Math.random() - 0.5) * halfWidth,
+              }
+            : {
+                x: (Math.random() - 0.5) * 1.6 * halfLength,
+                y: (Math.random() - 0.5) * 1.6 * halfWidth,
+              }
+        const r = applyAction(s, seat, {
+          type: "placeBall",
+          shotNo: s.shotNo,
+          pos,
+        })
+        if (r.ok) {
+          this.cuePlaced = true
+          this.refereeState = r.state
+          this.refereeShown = false
+          r.events.forEach((e) => this.enqueue(e))
+          return true
+        }
+      }
+    }
+    return false
   }
 
   // ---------------------------------------------------------------- free play
@@ -887,7 +1129,11 @@ export class Game {
       if (this.placing && !this.player.playing) {
         this.dragBall = this.ballAt(p.x, p.y)
         this.dragMoved = false
-      } else {
+      } else if (this.inHand() && this.ballAt(p.x, p.y) === 0) {
+        this.carryingCue = true
+        this.dragBall = 0
+        this.dragMoved = false
+      } else if (!this.callAt(p)) {
         this.aimTo(p.x, p.y)
       }
     })
@@ -910,13 +1156,55 @@ export class Game {
       }
       active = null
       this.controls.hideThickness()
-      if (this.dragBall !== null && !this.dragMoved) {
+      if (this.carryingCue) {
+        this.carryingCue = false
+        if (this.dragMoved) {
+          this.dropCue()
+        }
+      } else if (this.dragBall !== null && !this.dragMoved) {
         this.pickCueBall(this.dragBall)
       }
       this.dragBall = null
     }
     canvas.addEventListener("pointerup", release)
     canvas.addEventListener("pointercancel", release)
+  }
+
+  /** Pool: the player in turn has the cue ball in hand. */
+  private inHand(): boolean {
+    const pool = this.pool()
+    return this.shooter() !== null && !!pool && pool.ballInHand !== "none"
+  }
+
+  /** Pool: the cue ball was let go; the referee checks the spot. */
+  private dropCue() {
+    const seat = this.shooter()
+    const s = this.state
+    if (seat === null || !s) {
+      return
+    }
+    const cue = this.player.table.balls[0].pos
+    const pos = { x: Math.fround(cue.x), y: Math.fround(cue.y) }
+    if (this.mode === "match") {
+      this.cueBefore = s.balls
+      this.act(seat, { type: "placeBall", shotNo: s.shotNo, pos })
+      // shown where it was dropped; a rejection puts it back
+      s.balls = s.balls.map((b) => (b.id === 0 ? { id: 0, ...pos } : b))
+      return
+    }
+    const r = applyAction(this.refereeState!, seat, {
+      type: "placeBall",
+      shotNo: s.shotNo,
+      pos,
+    })
+    if (!r.ok) {
+      this.error(r.code, false, r.reason)
+      this.player.place(s.balls)
+      return
+    }
+    this.refereeState = r.state
+    this.refereeShown = false
+    r.events.forEach((e) => this.enqueue(e))
   }
 
   /** Practice, while placing: the ball of the seat whose turn it is. */
@@ -1032,6 +1320,14 @@ export class Game {
     })
     const commands = this.commands()
     this.controls.setTools(commands, this.placing, !this.nativeTools)
+    this.controls.setPrompt(this.poolPrompt(seat))
+    this.view.showKitchen(
+      this.inHand() && this.pool()?.ballInHand === "kitchen"
+    )
+    this.view.showPockets(
+      this.mustCall() && seat !== null && this.callBall !== null,
+      null
+    )
     if (this.mode === null) {
       return
     }
@@ -1050,6 +1346,22 @@ export class Game {
       result: s?.result ?? null,
       commands,
     }
+    if (s?.pool) {
+      hud.pool = {
+        racks: s.scores,
+        breakShot: s.pool.breakShot,
+        ballInHand: s.pool.ballInHand,
+        groups: s.pool.groups,
+        open: s.pool.open,
+        pendingChoice: s.pool.pendingChoice,
+        pushOutAvailable: s.pool.pushOutAvailable,
+        mustCall: this.mustCall(),
+        call: s.pool.call,
+        onTable: s.balls
+          .filter((b) => !b.pocketed && b.id > 0)
+          .map((b) => b.id),
+      }
+    }
     const json = JSON.stringify(hud)
     if (json !== this.lastHud) {
       this.lastHud = json
@@ -1058,6 +1370,30 @@ export class Game {
   }
 
   private lastHud = ""
+
+  /** What the pool rules want from the player right now, as a prompt. */
+  private poolPrompt(seat: Seat | null): Prompt | null {
+    const pool = this.pool()
+    if (!pool || seat === null || this.nativeTools) {
+      return null
+    }
+    const choice = pool.pendingChoice
+    if (choice && choice.seat === seat) {
+      return { text: "", buttons: choice.options.map((id) => ({ id })) }
+    }
+    const buttons: Prompt["buttons"] = []
+    let text = ""
+    if (pool.ballInHand === "kitchen") text = t("kitchen")
+    else if (pool.ballInHand === "anywhere") text = t("ballInHand")
+    if (this.mustCall()) {
+      text = this.callBall === null ? t("callBall") : t("callPocket")
+      buttons.push({ id: "safety" })
+    }
+    if (pool.pushOutAvailable) {
+      buttons.push({ id: "pushOut", on: this.pushOut })
+    }
+    return text === "" && buttons.length === 0 ? null : { text, buttons }
+  }
 
   private frame(now: number) {
     requestAnimationFrame((t) => this.frame(t))

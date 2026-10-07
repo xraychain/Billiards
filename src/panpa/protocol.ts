@@ -1,6 +1,7 @@
 import {
   BallState,
   MatchState,
+  PoolState,
   RuleType,
   Seat,
   Shot,
@@ -98,6 +99,19 @@ export interface Hud {
   result: MatchState["result"]
   /** practice/free commands that would do something right now */
   commands: CommandName[]
+  /** pool disciplines */
+  pool?: {
+    racks: [number, number]
+    breakShot: boolean
+    ballInHand: PoolState["ballInHand"]
+    groups: PoolState["groups"]
+    open: boolean
+    pendingChoice: PoolState["pendingChoice"]
+    pushOutAvailable: boolean
+    mustCall: boolean
+    call: PoolState["call"]
+    onTable: number[]
+  }
 }
 
 /** Game -> host. */

@@ -1,8 +1,9 @@
 import { R } from "../../model/physics/constants"
+import { PocketGeometry } from "../../view/pocketgeometry"
 import { TableGeometry } from "../../view/tablegeometry"
 import { configure } from "../configure"
 import { seededRandom } from "../random"
-import { BallState, Foul, OutcomeEvent, Side, Vec2 } from "../types"
+import { BallState, Foul, OutcomeEvent, RuleType, Side, Vec2 } from "../types"
 import { CaromRules } from "./carom"
 
 export const RED = 2
@@ -187,15 +188,36 @@ export function isPoint(cueBall: number, events: OutcomeEvent[]): boolean {
 }
 
 /** Dimensions a client needs to draw the table, in engine units. */
-export function tableInfo() {
-  configure("threecushion")
+export function tableInfo(ruleType: RuleType = "threecushion") {
+  configure(ruleType)
   const s = spots()
+  const hasPockets = TableGeometry.hasPockets
   return {
+    ruleType,
     ballRadius: R,
     /** half extents of the area ball centres can reach */
     halfLength: TableGeometry.tableX,
     halfWidth: TableGeometry.tableY,
     spots: { top: s.top, centre: s.centre, start: s.start, side: s.side },
+    hasPockets,
+    /** pool: the head string; the cue ball breaks from behind it (x below) */
+    headString: -TableGeometry.X / 2,
+    /** pool: pocket centres (NW, SW, N, S, NE, SE) and their radii */
+    pockets: hasPockets
+      ? PocketGeometry.pocketCenters.map((p) => ({
+          x: p.pos.x,
+          y: p.pos.y,
+          radius: p.radius,
+        }))
+      : [],
+    /** pool: the cushion ends beside the pockets */
+    knuckles: hasPockets
+      ? PocketGeometry.knuckles.map((k) => ({
+          x: k.pos.x,
+          y: k.pos.y,
+          radius: k.radius,
+        }))
+      : [],
   }
 }
 

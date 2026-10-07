@@ -2,6 +2,13 @@ import { Shot, ShotLimits, Side, Vec2 } from "../engine/types"
 import { t, TextKey } from "./i18n"
 import { CommandName, Rect } from "./protocol"
 
+export interface Prompt {
+  /** a line of guidance for the player */
+  text: string
+  /** buttons, by id (an i18n key) */
+  buttons: { id: string; label?: string; on?: boolean }[]
+}
+
 export interface ControlHandlers {
   /** strike point or power changed */
   onChange(): void
@@ -10,6 +17,8 @@ export interface ControlHandlers {
   onHit(): void
   onRespot(): void
   onCommand(name: CommandName): void
+  /** a prompt button was pressed */
+  onPrompt(id: string): void
 }
 
 function el(tag: string, className: string, parent: HTMLElement): HTMLElement {
@@ -90,6 +99,9 @@ export class Controls {
   private readonly respot: HTMLButtonElement
   private readonly tools: HTMLElement
   private readonly toolButtons = new Map<CommandName, HTMLButtonElement>()
+  private readonly prompt: HTMLElement
+  private readonly promptText: HTMLElement
+  private readonly promptButtons: HTMLElement
   private readonly debug: HTMLElement
   private lastEvent = "-"
   private readonly thickness: HTMLElement
@@ -111,6 +123,10 @@ export class Controls {
     this.respot = el("button", "small", this.root) as HTMLButtonElement
     this.hit = el("button", "hit", this.root) as HTMLButtonElement
     this.tools = el("div", "tools", host)
+    this.prompt = el("div", "prompt", host)
+    this.promptText = el("div", "prompt-text", this.prompt)
+    this.promptButtons = el("div", "prompt-buttons", this.prompt)
+    this.prompt.hidden = true
     this.debug = el("div", "debug", this.root)
     this.thickness = el("div", "thickness", host)
     const balls = el("div", "thickness-balls", this.thickness)
@@ -209,6 +225,10 @@ export class Controls {
     s.left = `${tableArea.x}px`
     s.top = `${tableArea.y}px`
     s.width = `${tableArea.w}px`
+    const p = this.prompt.style
+    p.left = `${tableArea.x}px`
+    p.top = `${tableArea.y + tableArea.h - 44}px`
+    p.width = `${tableArea.w}px`
     const t = this.thickness.style
     t.left = `${tableArea.x + tableArea.w / 2}px`
     t.top = `${tableArea.y + tableArea.h / 2}px`
@@ -272,6 +292,24 @@ export class Controls {
     const [min, max] = limits.power
     this.power = Math.min(1, Math.max(0, (shot.power - min) / (max - min)))
     this.draw()
+  }
+
+  /** Pool: guidance and the decision buttons the rules ask for. */
+  setPrompt(prompt: Prompt | null) {
+    this.prompt.hidden = prompt === null
+    if (!prompt) {
+      return
+    }
+    this.promptText.textContent = prompt.text
+    this.promptText.hidden = prompt.text === ""
+    this.promptButtons.replaceChildren()
+    for (const b of prompt.buttons) {
+      const button = document.createElement("button")
+      button.className = "tool" + (b.on ? " on" : "")
+      button.textContent = b.label ?? t(b.id as TextKey)
+      button.addEventListener("click", () => this.handlers.onPrompt(b.id))
+      this.promptButtons.appendChild(button)
+    }
   }
 
   /** Power in engine units. */

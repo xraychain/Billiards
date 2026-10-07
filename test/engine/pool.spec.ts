@@ -227,33 +227,51 @@ describe("engine nine ball", () => {
     expect(dry.expected.state.pool.ballInHand).to.equal("none")
   })
 
-  it("after a legal break a push-out is offered and the opponent then chooses", () => {
-    const v = vectors.find(
-      (x) => x.action.type === "shoot" && x.action.pushOut && x.expected.ok
-    )
-    if (!v) throw new Error("no push-out vector")
-    expect(v.state.pool.pushOutAvailable).to.equal(true)
-    const after = v.expected.state
-    if (after.pool.pendingChoice) {
-      expect(after.pool.pendingChoice).to.deep.include({
-        kind: "pushOut",
-        seat: v.seat === 0 ? 1 : 0,
+  it("a push-out suspends the usual fouls and hands the opponent the choice", () => {
+    const state = createMatch(base)
+    state.pool!.breakShot = false
+    state.pool!.ballInHand = "none"
+    state.pool!.pushOutAvailable = true
+    // too soft to reach anything: a foul on any ordinary shot, fine as a push-out
+    const plain = apply(state, 0, { type: "shoot", shotNo: 1, shot: soft })
+    const plainShot = plain.events[0]
+    if (plainShot.type !== "shot") throw new Error()
+    expect(plainShot.outcome.foul).to.equal("noBall")
+    const pushed = apply(state, 0, {
+      type: "shoot",
+      shotNo: 1,
+      shot: soft,
+      pushOut: true,
+    })
+    const shot = pushed.events[0]
+    if (shot.type !== "shot") throw new Error()
+    expect(shot.outcome.foul).to.be.null
+    const after = pushed.state
+    expect(after.pool!.pendingChoice).to.deep.include({
+      kind: "pushOut",
+      seat: 1,
+    })
+    expect(after.pool!.pendingChoice!.options).to.deep.equal(["shoot", "pass"])
+    expect(after.turnSeat).to.equal(1)
+    expect(
+      code(after, 1, { type: "shoot", shotNo: after.shotNo, shot: soft })
+    ).to.equal("ILLEGAL_ACTION:choice")
+    const pass = apply(after, 1, {
+      type: "choice",
+      shotNo: after.shotNo,
+      option: "pass",
+    })
+    expect(pass.state.turnSeat).to.equal(0)
+    expect(pass.state.pool!.pendingChoice).to.be.null
+    // without the offer a push-out is refused
+    expect(
+      code(pass.state, 0, {
+        type: "shoot",
+        shotNo: pass.state.shotNo,
+        shot: soft,
+        pushOut: true,
       })
-      expect(after.pool.pendingChoice.options).to.deep.equal(["shoot", "pass"])
-      const pass = apply(after, after.turnSeat, {
-        type: "choice",
-        shotNo: after.shotNo,
-        option: "pass",
-      })
-      expect(pass.state.turnSeat).to.equal(v.seat)
-      expect(
-        code(after, after.turnSeat, {
-          type: "shoot",
-          shotNo: after.shotNo,
-          shot: soft,
-        })
-      ).to.equal("ILLEGAL_ACTION:choice")
-    }
+    ).to.equal("ILLEGAL_ACTION:pushOut")
   })
 
   it("replays every golden vector exactly", () => {

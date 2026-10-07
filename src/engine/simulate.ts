@@ -35,13 +35,17 @@ function frame(table: Table): Frame {
   return { t: table.time, p }
 }
 
-function toEvents(table: Table): OutcomeEvent[] {
+/**
+ * Outcomes name balls by their index in the table; `ids` turns that back
+ * into the caller's ball ids.
+ */
+function toEvents(table: Table, ids: number[]): OutcomeEvent[] {
   const events: OutcomeEvent[] = []
   for (const o of table.outcome) {
     if (o.type === OutcomeType.Pot) {
       const ball = o.ballA!
       const pocket = PocketGeometry.pocketCenters.indexOf(ball.pocket)
-      const e: OutcomeEvent = { type: "pot", t: o.timestamp, a: ball.id }
+      const e: OutcomeEvent = { type: "pot", t: o.timestamp, a: ids[ball.id] }
       if (pocket >= 0) {
         e.pocket = pocket
       }
@@ -50,14 +54,14 @@ function toEvents(table: Table): OutcomeEvent[] {
       events.push({
         type: "collision",
         t: o.timestamp,
-        a: o.ballA!.id,
-        b: o.ballB!.id,
+        a: ids[o.ballA!.id],
+        b: ids[o.ballB!.id],
       })
     } else if (o.type === OutcomeType.Cushion) {
       const e: OutcomeEvent = {
         type: "cushion",
         t: o.timestamp,
-        a: o.ballA!.id,
+        a: ids[o.ballA!.id],
       }
       if (o.cushion) {
         e.cushion = o.cushion
@@ -103,8 +107,13 @@ export function simulateShot(
   configure(ruleType)
 
   const table = headlessTable(balls)
+  const ids = balls.map((b) => b.id)
+  const cueIndex = ids.indexOf(cueBall)
+  if (cueIndex < 0) {
+    throw new Error(`no ball ${cueBall}`)
+  }
   table.cushionModel = mathavanAdapter
-  table.cueball = table.balls[cueBall]
+  table.cueball = table.balls[cueIndex]
 
   const strike = cueStrike(
     shot.angle,
@@ -136,13 +145,13 @@ export function simulateShot(
   }
 
   const result: SimResult = {
-    final: table.balls.map((b) =>
+    final: table.balls.map((b, i) =>
       b.onTable()
-        ? { id: b.id, x: b.pos.x, y: b.pos.y }
-        : { id: b.id, x: b.pos.x, y: b.pos.y, pocketed: true }
+        ? { id: ids[i], x: b.pos.x, y: b.pos.y }
+        : { id: ids[i], x: b.pos.x, y: b.pos.y, pocketed: true }
     ),
     durationMs: table.time,
-    events: toEvents(table),
+    events: toEvents(table, ids),
     steps,
   }
   if (frameEvery > 0) {

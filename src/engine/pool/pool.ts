@@ -165,6 +165,8 @@ function rackFor(
   const { head } = spots()
   const objects =
     ruleType === "nineball" ? nineBallRack(rng) : eightBallRack(rng)
+  // balls are kept in id order: index and id agree everywhere
+  objects.sort((a, b) => a.id - b.id)
   return [{ id: CUE, x: Math.fround(head), y: 0 }, ...objects]
 }
 

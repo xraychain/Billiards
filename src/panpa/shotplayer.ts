@@ -1,12 +1,21 @@
 import { Vector3 } from "three"
 import { configure } from "../engine/configure"
+import { R } from "../model/physics/constants"
+
+function configureRadius(ruleType: RuleType): number {
+  configure(ruleType)
+  return R
+}
 import { MAX_SHOT_MS, STEP } from "../engine/simulate"
 import { BallState, RuleType, Shot } from "../engine/types"
 import { Ball, State } from "../model/ball"
 import { cueStrike, mathavanAdapter } from "../model/physics/physics"
 import { Table } from "../model/table"
 
-const COLOURS = [0xffffff, 0xffd700, 0xdd1111, 0xdd1111]
+import { Rack } from "../utils/rack"
+
+/** carom: white, yellow, red (and a second red for sagu) */
+const CAROM_COLOURS = [0xffffff, 0xffd700, 0xdd1111, 0xdd1111]
 
 /**
  * The table the player watches. It replays a shot in real time with exactly
@@ -25,37 +34,61 @@ export class ShotPlayer {
   ) {
     configure(ruleType)
     Ball.id = 0
-    this.table = new Table(
-      balls.map(
-        (b) =>
-          new Ball(
-            new Vector3(b.x, b.y, 0),
-            COLOURS[b.id],
-            undefined,
-            textured ? "texturedDots" : "dotted"
-          )
-      )
-    )
+    const pool = ruleType === "nineball" || ruleType === "eightball"
+    const plain = textured ? "texturedDots" : "dotted"
+    const make = (b: BallState): Ball => {
+      const pos = new Vector3(b.x, b.y, 0)
+      if (pool && b.id > 0) {
+        // numbered pool ball
+        return new Ball(pos, Rack.BALL_COLORS[b.id], b.id)
+      }
+      const colour = pool ? 0xffffff : CAROM_COLOURS[b.id]
+      return new Ball(pos, colour, undefined, plain)
+    }
+    // table.balls[id] must be the ball with that id
+    const ordered = balls.slice().sort((a, b) => a.id - b.id)
+    this.table = new Table(ordered.map(make))
     this.table.cushionModel = mathavanAdapter
+    this.place(balls)
   }
 
   /** Put the balls at rest on the given places. */
   place(balls: BallState[]) {
     this.playing = false
+    const R = this.radius()
     for (const b of balls) {
       const ball = this.table.balls[b.id]
-      ball.pos.set(b.x, b.y, 0)
       ball.setStationary()
+      if (b.pocketed) {
+        ball.pos.set(b.x, b.y, -10 * R)
+        ball.state = State.InPocket
+      } else {
+        ball.pos.set(b.x, b.y, 0)
+      }
     }
     this.table.outcome = []
   }
 
+  private radius(): number {
+    return configureRadius(this.ruleType)
+  }
+
   positions(): BallState[] {
-    return this.table.balls.map((b) => ({ id: b.id, x: b.pos.x, y: b.pos.y }))
+    return this.table.balls.map((b) =>
+      b.onTable()
+        ? { id: b.id, x: b.pos.x, y: b.pos.y }
+        : { id: b.id, x: b.pos.x, y: b.pos.y, pocketed: true }
+    )
+  }
+
+  /** Move one ball at rest (placing by hand). */
+  moveBall(id: number, x: number, y: number) {
+    const ball = this.table.balls[id]
+    ball.pos.set(x, y, 0)
+    ball.setStationary()
   }
 
   strike(start: BallState[], cueBall: number, shot: Shot) {
-    configure(this.ruleType)
     this.place(start)
     const table = this.table
     table.cueball = table.balls[cueBall]

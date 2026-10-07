@@ -3,6 +3,7 @@ import {
   BoxGeometry,
   BufferGeometry,
   CircleGeometry,
+  CylinderGeometry,
   Color,
   DirectionalLight,
   Group,
@@ -18,7 +19,7 @@ import {
   WebGLRenderer,
 } from "three"
 import { tableInfo } from "../engine/rules/threecushion"
-import { Vec2 } from "../engine/types"
+import { RuleType, Vec2 } from "../engine/types"
 import { Table } from "../model/table"
 import { Rect, Theme } from "./protocol"
 
@@ -37,7 +38,10 @@ export class TableView {
   readonly scene = new Scene()
   private readonly renderer: WebGLRenderer
   private readonly camera = new OrthographicCamera(-1, 1, 1, -1, -10, 10)
-  private readonly info = tableInfo()
+  private info = tableInfo()
+  private tableGroup: Group
+  private readonly pocketMarkers: Mesh[] = []
+  private readonly kitchen: Mesh
   private readonly cloth = new MeshLambertMaterial()
   private readonly cushion = new MeshLambertMaterial()
   private readonly frame = new MeshLambertMaterial()
@@ -50,10 +54,12 @@ export class TableView {
   private readonly tipDot: Mesh
   private readonly marker: Mesh
   /** half size of the table including rails, table units */
-  private readonly outer: Vec2
+  private outer: Vec2
   /** pixels per table unit and the pixel the table centre maps to */
   private scale = 1
   private centre: Vec2 = { x: 0, y: 0 }
+  private lastLayout: { width: number; height: number; area: Rect } | null =
+    null
 
   constructor(
     readonly canvas: HTMLCanvasElement,
@@ -70,16 +76,23 @@ export class TableView {
     this.camera.lookAt(0, 0, 0)
 
     const R = this.info.ballRadius
-    const rail = 3.4 * R
-    this.outer = {
-      x: this.info.halfLength + R + rail,
-      y: this.info.halfWidth + R + rail,
-    }
+    this.outer = this.outerFor(this.info)
     this.scene.add(new AmbientLight(0xffffff, 1.9))
     const sun = new DirectionalLight(0xffffff, 1.6)
     sun.position.set(-0.4, 0.5, 2)
     this.scene.add(sun)
-    this.scene.add(this.buildTable(rail))
+    this.tableGroup = this.buildTable()
+    this.scene.add(this.tableGroup)
+    this.kitchen = new Mesh(
+      new BoxGeometry(1, 1, 0.001),
+      new MeshBasicMaterial({
+        color: 0xffffff,
+        transparent: true,
+        opacity: 0.12,
+      })
+    )
+    this.kitchen.visible = false
+    this.scene.add(this.kitchen)
 
     const line = (opacity: number) =>
       new Line(
@@ -138,10 +151,36 @@ export class TableView {
     this.setTheme({})
   }
 
-  private buildTable(rail: number): Group {
+  private outerFor(info: ReturnType<typeof tableInfo>): Vec2 {
+    const R = info.ballRadius
+    const rail = 3.4 * R
+    return {
+      x: info.halfLength + R + rail,
+      y: info.halfWidth + R + rail,
+    }
+  }
+
+  /** Rebuild the table for another discipline (pocketed or not). */
+  setRule(ruleType: RuleType) {
+    if (ruleType === this.info.ruleType) {
+      return
+    }
+    this.info = tableInfo(ruleType)
+    this.outer = this.outerFor(this.info)
+    this.scene.remove(this.tableGroup)
+    this.tableGroup = this.buildTable()
+    this.scene.add(this.tableGroup)
+    if (this.lastLayout) {
+      const { width, height, area } = this.lastLayout
+      this.layout(width, height, area)
+    }
+  }
+
+  private buildTable(): Group {
     const R = this.info.ballRadius
     const X = this.info.halfLength + R
     const Y = this.info.halfWidth + R
+    const rail = 3.4 * R
     const group = new Group()
     const box = (w: number, h: number, material, x = 0, y = 0, z = 0) => {
       const mesh = new Mesh(new BoxGeometry(w, h, R * 0.4), material)
@@ -151,10 +190,14 @@ export class TableView {
     box(2 * this.outer.x, 2 * this.outer.y, this.frame, 0, 0, -R * 1.6)
     box(2 * X, 2 * Y, this.cloth, 0, 0, -R * 1.2)
     const nose = 1.1 * R
-    box(2 * X + 2 * nose, nose, this.cushion, 0, Y + nose / 2, -R * 0.9)
-    box(2 * X + 2 * nose, nose, this.cushion, 0, -Y - nose / 2, -R * 0.9)
-    box(nose, 2 * Y, this.cushion, X + nose / 2, 0, -R * 0.9)
-    box(nose, 2 * Y, this.cushion, -X - nose / 2, 0, -R * 0.9)
+    if (this.info.hasPockets) {
+      this.buildPockets(group, nose)
+    } else {
+      box(2 * X + 2 * nose, nose, this.cushion, 0, Y + nose / 2, -R * 0.9)
+      box(2 * X + 2 * nose, nose, this.cushion, 0, -Y - nose / 2, -R * 0.9)
+      box(nose, 2 * Y, this.cushion, X + nose / 2, 0, -R * 0.9)
+      box(nose, 2 * Y, this.cushion, -X - nose / 2, 0, -R * 0.9)
+    }
 
     // diamonds: 8 divisions on the long rails, 4 on the short ones
     const dot = new CircleGeometry(R * 0.22, 12)
@@ -165,8 +208,9 @@ export class TableView {
       mesh.position.set(x, y, -R * 0.6)
       group.add(mesh)
     }
-    for (let i = 0; i <= 8; i++) {
+    for (let i = 1; i < 8; i++) {
       const x = -X + (i * 2 * X) / 8
+      if (this.info.hasPockets && i === 4) continue
       diamond(x, Y + inset)
       diamond(x, -Y - inset)
     }
@@ -175,7 +219,122 @@ export class TableView {
       diamond(X + inset, y)
       diamond(-X - inset, y)
     }
+    if (!this.info.hasPockets) {
+      for (const x of [-X, X]) {
+        diamond(x, Y + inset)
+        diamond(x, -Y - inset)
+      }
+    }
     return group
+  }
+
+  /** Cushion segments between the pocket jaws, the jaws, and the holes. */
+  private buildPockets(group: Group, nose: number) {
+    const R = this.info.ballRadius
+    const X = this.info.halfLength + R
+    const Y = this.info.halfWidth + R
+    const k = this.info.knuckles
+    const segment = (a: Vec2, b: Vec2, vertical: boolean) => {
+      const length = vertical ? Math.abs(b.y - a.y) : Math.abs(b.x - a.x)
+      const mesh = new Mesh(
+        new BoxGeometry(
+          vertical ? nose : length,
+          vertical ? length : nose,
+          R * 0.4
+        ),
+        this.cushion
+      )
+      const mx = (a.x + b.x) / 2
+      const my = (a.y + b.y) / 2
+      mesh.position.set(
+        vertical ? Math.sign(mx) * (X + nose / 2) : mx,
+        vertical ? my : Math.sign(my) * (Y + nose / 2),
+        -R * 0.9
+      )
+      group.add(mesh)
+    }
+    // knuckles come in pairs along each cushion run (see PocketGeometry)
+    segment(k[0], k[2], false) // NW -> N, top rail
+    segment(k[3], k[6], false) // N -> NE, top rail
+    segment(k[4], k[11], false) // S -> SW, bottom rail
+    segment(k[5], k[9], false) // S -> SE, bottom rail
+    segment(k[1], k[10], true) // NW -> SW, left rail
+    segment(k[7], k[8], true) // NE -> SE, right rail
+    const jaw = new MeshLambertMaterial({ color: this.cushion.color })
+    for (const j of k) {
+      const mesh = new Mesh(
+        new CylinderGeometry(j.radius, j.radius, R * 0.4, 12),
+        jaw
+      )
+      mesh.rotation.x = Math.PI / 2
+      mesh.position.set(j.x, j.y, -R * 0.9)
+      group.add(mesh)
+    }
+    const hole = new MeshBasicMaterial({ color: 0x0b0b10 })
+    this.pocketMarkers.forEach((m) => this.scene.remove(m))
+    this.pocketMarkers.length = 0
+    for (const p of this.info.pockets) {
+      const mesh = new Mesh(new CircleGeometry(p.radius, 24), hole)
+      mesh.position.set(p.x, p.y, -R * 1.0)
+      group.add(mesh)
+      const marker = new Mesh(
+        new RingGeometry(p.radius * 0.9, p.radius * 1.15, 32),
+        new MeshBasicMaterial({
+          color: 0xffd34d,
+          transparent: true,
+          opacity: 0.9,
+        })
+      )
+      marker.position.set(p.x, p.y, R * 1.1)
+      marker.visible = false
+      this.pocketMarkers.push(marker)
+      this.scene.add(marker)
+    }
+  }
+
+  /** Pool: show the pockets as targets for a call; `selected` glows. */
+  showPockets(visible: boolean, selected: number | null = null) {
+    this.pocketMarkers.forEach((m, i) => {
+      m.visible = visible
+      const material = m.material as MeshBasicMaterial
+      material.opacity = i === selected ? 1 : 0.45
+      material.color.set(i === selected ? 0xffffff : 0xffd34d)
+    })
+  }
+
+  /** Nearest pocket to a table point, if the point is close to one. */
+  pocketAt(p: Vec2): number | null {
+    let best: number | null = null
+    let bestD = Infinity
+    this.info.pockets.forEach((pk, i) => {
+      const d = Math.hypot(pk.x - p.x, pk.y - p.y)
+      if (d < pk.radius * 1.6 && d < bestD) {
+        best = i
+        bestD = d
+      }
+    })
+    return best
+  }
+
+  /** Pool: the area behind the head string where the cue ball may go. */
+  showKitchen(visible: boolean) {
+    this.kitchen.visible = visible
+    if (visible) {
+      const R = this.info.ballRadius
+      const left = -(this.info.halfLength + R)
+      const right = this.info.headString
+      const Y = this.info.halfWidth + R
+      this.kitchen.scale.set(right - left, 2 * Y, 1)
+      this.kitchen.position.set((left + right) / 2, 0, -R * 1.1)
+    }
+  }
+
+  get headString(): number {
+    return this.info.headString
+  }
+
+  get hasPockets(): boolean {
+    return this.info.hasPockets
   }
 
   get ballRadius(): number {
@@ -206,6 +365,7 @@ export class TableView {
 
   /** Fit the whole table into `area`, keeping its proportions. */
   layout(width: number, height: number, area: Rect) {
+    this.lastLayout = { width, height, area }
     const dpr = Math.min(globalThis.devicePixelRatio || 1, 2)
     this.renderer.setPixelRatio(dpr)
     this.renderer.setSize(width, height, false)
@@ -252,6 +412,10 @@ export class TableView {
   syncBalls(table: Table, seconds: number) {
     const R = this.info.ballRadius
     for (const b of table.balls) {
+      const shown = b.onTable() || b.pos.z > -R
+      b.ballmesh.mesh.visible = shown
+      b.ballmesh.shadow.visible = shown
+      if (!shown) continue
       b.ballmesh.updateAll(b, seconds)
       b.ballmesh.shadow.position.set(
         b.pos.x + R * 0.22,
