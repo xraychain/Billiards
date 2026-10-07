@@ -3,7 +3,7 @@ import { CaromRules } from "./carom"
 import { saguRules } from "./sagu"
 import { threeCushionRules } from "./threecushion"
 
-export const RULES: Record<RuleType, CaromRules> = {
+export const RULES: Partial<Record<RuleType, CaromRules>> = {
   threecushion: threeCushionRules,
   sagu: saguRules,
 }

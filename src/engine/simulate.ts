@@ -1,9 +1,11 @@
 import { Vector3 } from "three"
 import { Ball, State } from "../model/ball"
+import { PocketGeometry } from "../view/pocketgeometry"
 import { Headless } from "../model/headless"
 import { OutcomeType } from "../model/outcome"
 import { cueStrike, mathavanAdapter } from "../model/physics/physics"
 import { Table } from "../model/table"
+import { R } from "../model/physics/constants"
 import { configure } from "./configure"
 import {
   BallState,
@@ -36,7 +38,15 @@ function frame(table: Table): Frame {
 function toEvents(table: Table): OutcomeEvent[] {
   const events: OutcomeEvent[] = []
   for (const o of table.outcome) {
-    if (o.type === OutcomeType.Collision) {
+    if (o.type === OutcomeType.Pot) {
+      const ball = o.ballA!
+      const pocket = PocketGeometry.pocketCenters.indexOf(ball.pocket)
+      const e: OutcomeEvent = { type: "pot", t: o.timestamp, a: ball.id }
+      if (pocket >= 0) {
+        e.pocket = pocket
+      }
+      events.push(e)
+    } else if (o.type === OutcomeType.Collision) {
       events.push({
         type: "collision",
         t: o.timestamp,
@@ -63,9 +73,17 @@ function headlessTable(balls: BallState[]): Table {
   Headless.on = true
   try {
     Ball.id = 0
-    return new Table(
+    const table = new Table(
       balls.map((b) => new Ball(new Vector3(b.x, b.y, 0), 0xffffff))
     )
+    // pocketed balls take no part: parked below the slate, out of play
+    balls.forEach((b, i) => {
+      if (b.pocketed) {
+        table.balls[i].pos.z = -10 * R
+        table.balls[i].state = State.InPocket
+      }
+    })
+    return table
   } finally {
     Headless.on = before
   }
@@ -118,7 +136,11 @@ export function simulateShot(
   }
 
   const result: SimResult = {
-    final: table.balls.map((b) => ({ id: b.id, x: b.pos.x, y: b.pos.y })),
+    final: table.balls.map((b) =>
+      b.onTable()
+        ? { id: b.id, x: b.pos.x, y: b.pos.y }
+        : { id: b.id, x: b.pos.x, y: b.pos.y, pocketed: true }
+    ),
     durationMs: table.time,
     events: toEvents(table),
     steps,

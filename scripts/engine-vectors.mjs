@@ -15,7 +15,10 @@ const FILE = "vectors/threecushion.json"
 const RULE_FILES = {
   threecushion: "vectors/threecushion.json",
   sagu: "vectors/sagu.json",
+  nineball: "vectors/nineball.json",
+  eightball: "vectors/eightball.json",
 }
+const POOL = ["nineball", "eightball"]
 /** the discipline being generated; set by `gen` per file */
 let RULE = "threecushion"
 const HEAVY_FILE = "vectors/threecushion-heavy.json"
@@ -207,9 +210,107 @@ function contactCases(E, random, vectors) {
   })
 }
 
+/**
+ * Pool: whole matches played with the suggester, with random answers to
+ * choices, ball-in-hand placements (some illegal), calls and a sprinkling
+ * of rejected actions.
+ */
+function poolMatches(E, random, vectors, matches) {
+  for (let m = 0; m < matches; m++) {
+    let state = newMatch(E, `${RULE}-${m}`, m % 2, { raceTo: 2 })
+    const push = (seat, action) => {
+      const result = E.applyAction(state, seat, action)
+      vectors.push({ state, seat, action, expected: result })
+      if (result.ok) state = result.state
+      return result
+    }
+    for (let step = 0; step < 160 && state.phase === "playing"; step++) {
+      poolStep(E, random, state, push)
+    }
+  }
+}
+
+function answerChoice(random, state, push) {
+  const seat = state.turnSeat
+  const options = state.pool.pendingChoice.options
+  if (random() < 0.1) {
+    push(seat, { type: "choice", shotNo: state.shotNo, option: "nonsense" })
+  }
+  push(seat, {
+    type: "choice",
+    shotNo: state.shotNo,
+    option: options[Math.floor(random() * options.length)],
+  })
+}
+
+/** An illegal spot now and then, then a legal one. */
+function placeCueBall(random, state, push) {
+  const seat = state.turnSeat
+  const kitchen = state.pool.ballInHand === "kitchen"
+  if (random() < 0.3) {
+    push(seat, {
+      type: "placeBall",
+      shotNo: state.shotNo,
+      pos: { x: 0.9, y: 0 },
+    })
+  }
+  for (let k = 0; k < 60; k++) {
+    const pos = kitchen
+      ? { x: -1.1 + 0.3 * random(), y: 0.7 * (random() - 0.5) }
+      : { x: 1.5 * (random() - 0.5), y: 0.7 * (random() - 0.5) }
+    if (push(seat, { type: "placeBall", shotNo: state.shotNo, pos }).ok) break
+  }
+}
+
+function poolStep(E, random, state, push) {
+  if (state.pool.pendingChoice) {
+    answerChoice(random, state, push)
+    return
+  }
+  if (state.pool.ballInHand !== "none") {
+    placeCueBall(random, state, push)
+  }
+  const seat = state.turnSeat
+  const shotNo = state.shotNo
+  const roll = random()
+  if (roll < 0.05) {
+    push(seat, { type: "timeout" })
+    return
+  }
+  if (roll < 0.1) {
+    push(seat === 0 ? 1 : 0, {
+      type: "shoot",
+      shotNo,
+      shot: randomShot(E, random),
+    })
+  }
+  const shot = E.suggestShot(state, seat, random, { tries: 25 })
+  if (RULE === "eightball" && !state.pool.breakShot) {
+    const call = E.suggestCall(state, seat, shot)
+    if (random() < 0.1) push(seat, { type: "shoot", shotNo, shot })
+    push(
+      seat,
+      call === "safety"
+        ? { type: "call", shotNo, safety: true }
+        : { type: "call", shotNo, ...call }
+    )
+  }
+  const pushOut = state.pool.pushOutAvailable && random() < 0.5
+  push(
+    seat,
+    pushOut
+      ? { type: "shoot", shotNo, shot, pushOut: true }
+      : { type: "shoot", shotNo, shot }
+  )
+}
+
 function generate(E, matches, shotsPerMatch) {
   const random = lcg(20261005)
   const vectors = []
+  if (POOL.includes(RULE)) {
+    poolMatches(E, random, vectors, matches)
+    return vectors
+  }
   randomMatches(E, random, vectors, matches, shotsPerMatch)
   shortRaces(E, random, vectors, 30)
   contactCases(E, random, vectors)
@@ -280,7 +381,8 @@ if (mode === "gen") {
   let vectors = []
   for (const [rule, file] of Object.entries(RULE_FILES)) {
     RULE = rule
-    const made = generate(E, rule === "threecushion" ? 20 : 12, 15)
+    const sizes = { threecushion: 20, sagu: 12, nineball: 6, eightball: 6 }
+    const made = generate(E, sizes[rule], 15)
     writeFileSync(
       file,
       JSON.stringify({ engineVersion: E.ENGINE_VERSION, vectors: made }) + "\n"
@@ -399,7 +501,8 @@ if (mode === "gen") {
     `shot s   mean ${(mean(sim) / 1000).toFixed(1)}  p50 ${(percentile(sim, 0.5) / 1000).toFixed(1)}  p95 ${(percentile(sim, 0.95) / 1000).toFixed(1)}  max ${(sim[sim.length - 1] / 1000).toFixed(1)}`
   )
 } else if (mode === "stats") {
-  const { vectors } = JSON.parse(readFileSync(FILE, "utf8"))
+  const file = RULE_FILES[process.argv[3]] ?? FILE
+  const { vectors } = JSON.parse(readFileSync(file, "utf8"))
   const counts = {}
   const add = (k) => (counts[k] = (counts[k] || 0) + 1)
   for (const v of vectors) {
@@ -412,6 +515,8 @@ if (mode === "gen") {
         add(`shot ${e.stage}`)
         if (e.outcome.points) add(`point ${e.stage}`)
         if (e.outcome.foul) add(`foul ${e.outcome.foul}`)
+        if (e.outcome.rack !== undefined)
+          add(`rack ${e.outcome.rack ? "won" : "lost"}`)
       } else if (e.type === "matchEnd") {
         add(`end ${e.reason}`)
       } else if (e.type === "position") {

@@ -1,5 +1,15 @@
-import { maxPower, offCenterLimit } from "../model/physics/constants"
-import { hash } from "./random"
+import {
+  canonicalShot,
+  end,
+  extendClock,
+  fail,
+  isInt,
+  other,
+  SHOT_LIMITS,
+  stateHash,
+  timeFoul,
+} from "./common"
+import { applyPool, isPool, newRack } from "./pool/pool"
 import * as threecushion from "./rules/threecushion"
 import { rulesFor } from "./rules"
 import { simulateShot } from "./simulate"
@@ -7,8 +17,6 @@ import {
   Action,
   ActionResult,
   BilEvent,
-  EndReason,
-  ErrorCode,
   MatchSetup,
   MatchState,
   PositionEvent,
@@ -16,28 +24,20 @@ import {
   Seat,
   Shot,
   ShotEvent,
-  ShotLimits,
   Side,
   SimResult,
 } from "./types"
 
-export const ENGINE_VERSION = "0.6.0"
+export const ENGINE_VERSION = "0.7.0"
 
-export const RULE_TYPES: readonly RuleType[] = ["threecushion", "sagu"]
+export const RULE_TYPES: readonly RuleType[] = [
+  "threecushion",
+  "sagu",
+  "nineball",
+  "eightball",
+]
 
-export const SHOT_LIMITS: ShotLimits = {
-  power: [Math.fround(maxPower * 0.02), Math.fround(maxPower)],
-  offsetMax: offCenterLimit,
-  elevation: [0, Math.fround((2 * Math.PI) / 5)],
-}
-
-function isInt(value: unknown, min: number, max: number): boolean {
-  return (
-    Number.isInteger(value) &&
-    (value as number) >= min &&
-    (value as number) <= max
-  )
-}
+export { SHOT_LIMITS, stateHash }
 
 /**
  * Time-outs per player by match length, as applied at UMB World Cups:
@@ -89,6 +89,11 @@ export function createMatch(config: MatchSetup): MatchState {
   checkConfig(config)
   const first = config.firstSeat
   const extensions = config.extensions ?? extensionsFor(config.raceTo)
+  if (isPool(config.ruleType)) {
+    const state = newRack(config, extensions)
+    state.engineVersion = ENGINE_VERSION
+    return state
+  }
   const rules = rulesFor(config.ruleType)
   // art. 23.2: whoever starts plays the white ball, for the whole match
   const cueBallOf: [number, number] = first === 0 ? [0, 1] : [1, 0]
@@ -125,85 +130,6 @@ export function createMatch(config: MatchSetup): MatchState {
     shootout: null,
     result: null,
   }
-}
-
-function fail(code: ErrorCode, reason?: string): ActionResult {
-  return reason === undefined
-    ? { ok: false, code }
-    : { ok: false, code, reason }
-}
-
-function other(seat: Seat): Seat {
-  return seat === 0 ? 1 : 0
-}
-
-/** Round to float32 and range-check. Returns a reason string when invalid. */
-function canonicalShot(input: Shot): Shot | string {
-  const raw = [
-    input?.angle,
-    input?.power,
-    input?.elevation,
-    input?.offset?.x,
-    input?.offset?.y,
-  ]
-  if (!raw.every((n) => typeof n === "number" && Number.isFinite(n))) {
-    return "shot fields must be finite numbers"
-  }
-  const shot: Shot = {
-    angle: Math.fround(input.angle),
-    power: Math.fround(input.power),
-    elevation: Math.fround(input.elevation),
-    offset: { x: Math.fround(input.offset.x), y: Math.fround(input.offset.y) },
-  }
-  if (Math.abs(shot.angle) > 2 * Math.PI) {
-    return "angle"
-  }
-  if (shot.power < SHOT_LIMITS.power[0] || shot.power > SHOT_LIMITS.power[1]) {
-    return "power"
-  }
-  if (
-    shot.elevation < SHOT_LIMITS.elevation[0] ||
-    shot.elevation > SHOT_LIMITS.elevation[1]
-  ) {
-    return "elevation"
-  }
-  // small allowance: the limit is applied in float64 by the aiming UI
-  if (Math.hypot(shot.offset.x, shot.offset.y) > SHOT_LIMITS.offsetMax + 1e-6) {
-    return "offset"
-  }
-  return shot
-}
-
-export function stateHash(state: MatchState): string {
-  return hash(
-    JSON.stringify([
-      state.balls.map((b) => [b.id, b.x, b.y]),
-      state.scores,
-      state.turnSeat,
-      state.shotNo,
-      state.phase,
-      state.stage,
-      state.shootout,
-    ])
-  )
-}
-
-function end(
-  state: MatchState,
-  winnerSeat: Seat | null,
-  reason: EndReason,
-  events: BilEvent[]
-) {
-  state.phase = "ended"
-  state.frozen = []
-  state.opening = false
-  state.result = { winnerSeat, reason }
-  events.push({
-    type: "matchEnd",
-    winnerSeat,
-    scores: [state.scores[0], state.scores[1]],
-    reason,
-  })
 }
 
 /** Hand the table to `seat`, either as the balls lie or on the starting position. */
@@ -455,21 +381,10 @@ function respot(state: MatchState, seat: Seat): ActionResult {
  */
 function timeout(state: MatchState, seat: Seat): ActionResult {
   const events: BilEvent[] = []
-  if (state.extensionsLeft[seat] > 0) {
-    state.extensionsLeft[seat]--
-    state.extensionsOnShot++
-    events.push({ type: "extension", seat, left: state.extensionsLeft[seat] })
+  if (extendClock(state, seat, events)) {
     return { ok: true, state, events }
   }
-  state.extensionsOnShot = 0
-  state.timeouts[seat]++
-  state.shotNo++
-  events.push({ type: "timeout", seat, count: state.timeouts[seat] })
-  const limit = state.config.timeoutLimit
-  if (limit > 0 && state.timeouts[seat] >= limit) {
-    state.innings[seat]++
-    end(state, other(seat), "timeout", events)
-  } else {
+  if (!timeFoul(state, seat, events)) {
     inningOver(state, seat, events, true)
   }
   return { ok: true, state, events }
@@ -497,6 +412,9 @@ export function applyAction(
     end(state, other(seat), "concede", events)
     return { ok: true, state, events }
   }
+  if (state.pool) {
+    return applyPool(state, seat, action)
+  }
   if (!["shoot", "respot", "timeout"].includes(action?.type)) {
     return fail("VALIDATION_FAILED", "action")
   }
@@ -510,9 +428,11 @@ export function applyAction(
       return action.shotNo === state.shotNo
         ? respot(state, seat)
         : fail("STALE_SHOT_NO")
-    default:
+    case "shoot":
       return action.shotNo === state.shotNo
         ? shoot(state, seat, action.shot, action.side)
         : fail("STALE_SHOT_NO")
+    default:
+      return fail("VALIDATION_FAILED", "action")
   }
 }

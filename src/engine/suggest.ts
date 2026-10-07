@@ -1,3 +1,4 @@
+import { callFor, poolTargets, previewVerdict } from "./pool/pool"
 import { rulesFor } from "./rules"
 import * as threecushion from "./rules/threecushion"
 import { SHOT_LIMITS, targetFor } from "./match"
@@ -89,8 +90,11 @@ export function suggestShot(
   options: SuggestOptions = {}
 ): Shot {
   const tries = Math.max(1, options.tries ?? 150)
-  const rules = rulesFor(state.config.ruleType)
   const cueBall = state.cueBallOf[seat]
+  if (state.pool) {
+    return suggestPoolShot(state, seat, rng, tries, options.aimError ?? 0)
+  }
+  const rules = rulesFor(state.config.ruleType)
   const targets = rules.aimTargets(state.balls, cueBall, state.opening)
   const judgeInput = {
     cueBall,
@@ -130,4 +134,68 @@ export function suggestShot(
   const chosen = legal ?? first!
   const aimError = options.aimError ?? 0
   return aimError > 0 ? unsteady(chosen, aimError, rng) : chosen
+}
+
+/** Pool: the first candidate that pockets a legal ball, else a legal shot. */
+function suggestPoolShot(
+  state: MatchState,
+  seat: Seat,
+  rng: () => number,
+  tries: number,
+  aimError: number
+): Shot {
+  const cueBall = state.cueBallOf[seat]
+  const targets = poolTargets(state, seat)
+  // balls are indexed by id; pocketed ones never appear among the targets
+  const balls = state.balls
+  let legal: Shot | undefined
+  let first: Shot | undefined
+  for (let n = 0; n < tries; n++) {
+    const shot = candidate(balls, cueBall, targets, rng)
+    first ??= shot
+    let events
+    try {
+      events = simulateShot(
+        state.config.ruleType,
+        state.balls,
+        cueBall,
+        shot
+      ).events
+    } catch {
+      continue
+    }
+    const v = previewVerdict(state, seat, events)
+    if (v.foul || (v.rack !== undefined && v.rack !== seat)) {
+      continue
+    }
+    if (v.continues || v.rack === seat) {
+      legal = shot
+      break
+    }
+    legal ??= shot
+  }
+  const chosen = legal ?? first!
+  return aimError > 0 ? unsteady(chosen, aimError, rng) : chosen
+}
+
+/**
+ * 8-ball: the call to send before `shot`, from what the shot would do:
+ * the legal ball it pockets and the pocket, else a safety.
+ */
+export function suggestCall(
+  state: MatchState,
+  seat: Seat,
+  shot: Shot
+): { ball: number; pocket: number } | "safety" {
+  try {
+    const events = simulateShot(
+      state.config.ruleType,
+      state.balls,
+      state.cueBallOf[seat],
+      shot
+    ).events
+    return callFor(state, seat, events) ?? "safety"
+  } catch {
+    return "safety"
+  }
 }
