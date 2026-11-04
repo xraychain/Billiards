@@ -6,6 +6,7 @@ import {
   RULE_TYPES,
   SHOT_LIMITS,
   suggestCall,
+  suggestPlacement,
   suggestShot,
 } from "../engine"
 import { chooseSide } from "../engine/rules/threecushion"
@@ -27,7 +28,6 @@ import { Bridge } from "./bridge"
 import { Controls, Prompt } from "./controls"
 import { setLocale, t } from "./i18n"
 import {
-  BotLevel,
   BRIDGE_VERSION,
   BUNDLE_VERSION,
   CommandName,
@@ -40,21 +40,11 @@ import {
   Prefs,
   ServerFrame,
 } from "./protocol"
+import { previewSpot } from "./previewspot"
 import { selfCheck } from "./selfcheck"
+import { stayAtTable } from "./solo"
 import { ShotPlayer } from "./shotplayer"
 import { TableView } from "./tableview"
-
-/**
- * How the practice bot plays: how many candidate shots it considers and how
- * steadily it delivers the one it picks (standard deviation of the aiming
- * error, in degrees). Roughly 0.2, 0.4, 1 and 2.3 points per inning.
- */
-const BOT_LEVELS: Record<BotLevel, { tries: number; aimError: number }> = {
-  easy: { tries: 40, aimError: 0.5 },
-  normal: { tries: 60, aimError: 0.15 },
-  hard: { tries: 150, aimError: 0.07 },
-  pro: { tries: 150, aimError: 0 },
-}
 
 /** Balls further than this from where the server put them are reported. */
 const DESYNC = 1e-6
@@ -94,8 +84,6 @@ export class Game {
   private readonly sound = new Sound(true)
   private mode: Mode | null = null
   private mySeat: Seat | null = null
-  private botSeat: Seat | null = null
-  private botLevel: BotLevel = "normal"
   /** what the player has been shown so far */
   private state: MatchState | null = null
   /** practice: the referee's state, ahead of `state` while events play */
@@ -242,8 +230,6 @@ export class Game {
     }
     this.mode = d.mode
     if (d.mode === "practice") {
-      this.botSeat = d.practice?.opponent === "bot" ? 1 : null
-      this.botLevel = d.practice?.botLevel ?? "normal"
       this.shotClockSec = Math.max(
         0,
         Math.min(300, d.practice?.shotClockSec ?? 0)
@@ -266,7 +252,6 @@ export class Game {
     this.history = []
     this.lastPlayed = null
     this.mySeat = null
-    this.botSeat = null
     this.queue.length = 0
     this.current = null
     this.pending = null
@@ -336,8 +321,9 @@ export class Game {
     return createMatch({
       ruleType: this.ruleType,
       raceTo,
-      equalizingInning: true,
-      tieBreak: "shootout",
+      // practice is played alone: no equalizing inning, no shoot-out
+      equalizingInning: false,
+      tieBreak: "draw",
       timeoutLimit: 0,
       firstSeat: 0,
       seed: `local-${Date.now()}-${Math.random()}`,
@@ -492,7 +478,6 @@ export class Game {
       this.state = JSON.parse(JSON.stringify(this.refereeState))
       this.refereeShown = true
       this.refresh()
-      this.botTurn()
     }
   }
 
@@ -654,7 +639,7 @@ export class Game {
       return s.turnSeat === this.mySeat ? s.turnSeat : null
     }
     if (this.mode === "practice") {
-      return s.turnSeat === this.botSeat ? null : s.turnSeat
+      return s.turnSeat
     }
     return null
   }
@@ -763,6 +748,8 @@ export class Game {
     }
     this.bridge.send({ t: "game.haptic", d: { kind: "hit" } })
     this.act(seat, action)
+    // "repeat" puts the played power back with setShot, so this loses nothing
+    this.controls.resetPower()
   }
 
   /** 8-ball: a call is owed before this shot. */
@@ -831,9 +818,12 @@ export class Game {
     const seat = this.shooter()
     if (seat !== null && this.state?.pool) {
       const s = this.refereeState ?? this.state
-      if (this.mode === "practice" && this.botPoolStep(s, seat)) {
-        // a placement or a choice was made; shoot once it has been shown
-        setTimeout(() => this.autoHit(), 600)
+      if (this.autoPoolStep(s, seat)) {
+        // in practice nothing else changes the HUD: come back for the shot
+        // (in a match the server's answer does)
+        if (this.mode === "practice") {
+          setTimeout(() => this.autoHit(), 600)
+        }
         return
       }
       if (this.mustCall()) {
@@ -884,11 +874,10 @@ export class Game {
       this.error(result.code, false, result.reason)
       return
     }
-    if (seat !== this.botSeat) {
-      const step = { state: before, action }
-      this.history.push(step)
-      this.lastPlayed = step
-    }
+    const step = { state: before, action }
+    this.history.push(step)
+    this.lastPlayed = step
+    stayAtTable(seat, result.state, result.events)
     this.refereeState = result.state
     this.refereeShown = false
     result.events.forEach((e) => this.enqueue(e))
@@ -941,42 +930,11 @@ export class Game {
     }
   }
 
-  private botTurn() {
-    const s = this.refereeState
-    if (!s || s.phase !== "playing" || s.turnSeat !== this.botSeat) {
-      return
-    }
-    if (this.placing) {
-      return
-    }
-    const seat = s.turnSeat
-    setTimeout(() => {
-      if (this.refereeState !== s || this.mode !== "practice") {
-        return
-      }
-      const level = BOT_LEVELS[this.botLevel] ?? BOT_LEVELS.normal
-      if (s.pool && this.botPoolStep(s, seat)) {
-        return
-      }
-      const shot = suggestShot(s, seat, Math.random, {
-        tries: level.tries,
-        aimError: (level.aimError * Math.PI) / 180,
-      })
-      if (s.pool && this.ruleType === "eightball" && !s.pool.breakShot) {
-        const call = suggestCall(s, seat, shot)
-        this.act(
-          seat,
-          call === "safety"
-            ? { type: "call", shotNo: s.shotNo, safety: true }
-            : { type: "call", shotNo: s.shotNo, ...call }
-        )
-      }
-      this.act(seat, { type: "shoot", shotNo: this.refereeState!.shotNo, shot })
-    }, 900)
-  }
-
-  /** Pool bot: answer a choice or put the cue ball somewhere; true if it did. */
-  private botPoolStep(s: MatchState, seat: Seat): boolean {
+  /**
+   * Dev auto-play, pool: answer a pending choice or put the cue ball in
+   * hand down. True when it did one of those (the shot comes after).
+   */
+  private autoPoolStep(s: MatchState, seat: Seat): boolean {
     const pool = s.pool!
     if (pool.pendingChoice) {
       this.act(seat, {
@@ -987,32 +945,11 @@ export class Game {
       return true
     }
     if (pool.ballInHand !== "none" && !this.cuePlaced) {
-      const { halfLength, halfWidth } = this.view.bounds
-      for (let k = 0; k < 40; k++) {
-        const pos =
-          pool.ballInHand === "kitchen"
-            ? {
-                x:
-                  -halfLength +
-                  Math.random() * (this.view.headString + halfLength - 0.01),
-                y: (Math.random() - 0.5) * halfWidth,
-              }
-            : {
-                x: (Math.random() - 0.5) * 1.6 * halfLength,
-                y: (Math.random() - 0.5) * 1.6 * halfWidth,
-              }
-        const r = applyAction(s, seat, {
-          type: "placeBall",
-          shotNo: s.shotNo,
-          pos,
-        })
-        if (r.ok) {
-          this.cuePlaced = true
-          this.refereeState = r.state
-          this.refereeShown = false
-          r.events.forEach((e) => this.enqueue(e))
-          return true
-        }
+      const pos = suggestPlacement(s, Math.random)
+      if (pos) {
+        this.cuePlaced = true
+        this.act(seat, { type: "placeBall", shotNo: s.shotNo, pos })
+        return true
       }
     }
     return false
@@ -1028,6 +965,7 @@ export class Game {
     free.lastStart = this.player.positions()
     free.lastShot = this.shot()
     this.playFree()
+    this.controls.resetPower()
   }
 
   private playFree() {
@@ -1265,7 +1203,7 @@ export class Game {
       return
     }
     const seat = s.cueBallOf.indexOf(id) as Seat | -1
-    if (seat === -1 || seat === this.botSeat) {
+    if (seat === -1) {
       return
     }
     const next: MatchState = JSON.parse(JSON.stringify(s))
@@ -1305,17 +1243,39 @@ export class Game {
   /** The cut on the first ball in the line of aim, while aiming. */
   private showThickness(cueBall: number) {
     const table = this.player.table
-    const hit = new Overlap(table.balls).getOverlapOffset(
-      table.balls[cueBall],
-      unitAtAngle(this.angle)
-    )
+    const cue = table.balls[cueBall].pos
+    const dir = unitAtAngle(this.angle)
+    const hit = new Overlap(
+      table.balls.filter((b) => b.onTable())
+    ).getOverlapOffset(table.balls[cueBall], dir)
+    if (!hit) {
+      this.controls.showThickness(null)
+      return
+    }
+    // the ghost ball: where the cue ball is when it meets the object ball
+    const R = this.radius()
+    const to = hit.ball.pos.clone().sub(cue)
+    const along = to.dot(dir)
+    const off = Math.min(2 * R, Math.abs(hit.overlap) * R)
+    const ghostAt = along - Math.sqrt(Math.max(0, 4 * R * R - off * off))
+    const ghost = cue.clone().addScaledVector(dir, Math.max(0, ghostAt))
+    const page = (p: { x: number; y: number }) => this.view.toPage(p.x, p.y)
+    const at = previewSpot({
+      cue: page(cue),
+      ghost: page(ghost),
+      object: page(hit.ball.pos),
+      // page y runs down
+      dir: { x: dir.x, y: -dir.y },
+      radius: R * this.view.pixelsPerUnit(),
+      size: this.controls.thicknessSize,
+      area: this.tableRect,
+    })
     this.controls.showThickness(
-      hit
-        ? {
-            overlap: hit.overlap,
-            colour: `#${hit.ball.ballmesh.color.getHexString()}`,
-          }
-        : null
+      {
+        overlap: hit.overlap,
+        colour: `#${hit.ball.ballmesh.color.getHexString()}`,
+      },
+      at
     )
   }
 
@@ -1379,6 +1339,8 @@ export class Game {
       scores: s?.scores ?? [0, 0],
       innings: s?.innings ?? [0, 0],
       run: s?.run ?? 0,
+      highRun: s?.highRun ?? [0, 0],
+      solo: this.mode === "practice",
       turnSeat: s && s.phase === "playing" ? s.turnSeat : null,
       canShoot,
       opening: s?.opening ?? false,

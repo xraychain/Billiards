@@ -4,6 +4,7 @@ import {
   createMatch,
   SHOT_LIMITS,
   spotBall,
+  suggestPlacement,
   tableInfo,
 } from "../../src/engine"
 import { Action, MatchConfig, MatchState, Shot } from "../../src/engine/types"
@@ -362,5 +363,36 @@ describe("engine eight ball", () => {
       const got = applyAction(v.state, v.seat, v.action)
       expect(JSON.parse(JSON.stringify(got))).to.deep.equal(v.expected)
     }
+  })
+})
+
+describe("engine pool placement suggester", () => {
+  function lcg(seed: number) {
+    let a = seed
+    return () => {
+      a = (Math.imul(a, 1664525) + 1013904223) >>> 0
+      return a / 4294967296
+    }
+  }
+
+  it("suggests a legal spot behind the head string on the break", () => {
+    const state = createMatch(base)
+    const pos = suggestPlacement(state, lcg(1))!
+    expect(pos.x).to.be.below(tableInfo("nineball").headString)
+    expect(code(state, 0, { type: "placeBall", shotNo: 1, pos })).to.equal("ok")
+  })
+
+  it("suggests a legal spot anywhere after a foul, and nothing when not in hand", () => {
+    const state = createMatch({ ...base, ruleType: "eightball" })
+    state.pool!.breakShot = false
+    state.pool!.ballInHand = "anywhere"
+    for (let seed = 1; seed < 20; seed++) {
+      const pos = suggestPlacement(state, lcg(seed))!
+      expect(code(state, 0, { type: "placeBall", shotNo: 1, pos })).to.equal(
+        "ok"
+      )
+    }
+    state.pool!.ballInHand = "none"
+    expect(suggestPlacement(state, lcg(1))).to.be.null
   })
 })

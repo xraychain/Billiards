@@ -28,7 +28,7 @@ import {
   SimResult,
 } from "./types"
 
-export const ENGINE_VERSION = "0.7.1"
+export const ENGINE_VERSION = "0.7.2"
 
 export const RULE_TYPES: readonly RuleType[] = [
   "threecushion",

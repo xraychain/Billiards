@@ -13,6 +13,7 @@ import {
   MeshBasicMaterial,
   MeshLambertMaterial,
   OrthographicCamera,
+  PlaneGeometry,
   RingGeometry,
   Scene,
   Vector3,
@@ -22,12 +23,22 @@ import { tableInfo } from "../engine/rules/threecushion"
 import { RuleType, Vec2 } from "../engine/types"
 import { Table } from "../model/table"
 import { Rect, Theme } from "./protocol"
+import {
+  clothTexture,
+  cushionTexture,
+  pearlTexture,
+  RailSide,
+  shadowTexture,
+  woodTexture,
+} from "./textures"
 
 const DEFAULT_THEME: Required<Theme> = {
-  cloth: "#1c5fa5",
-  cushion: "#184f8a",
-  frame: "#4a2f1d",
+  cloth: "#1f62b2",
+  cushion: "#1d5aa3",
+  frame: "#6a4026",
 }
+
+const RAILS: RailSide[] = ["top", "bottom", "left", "right"]
 
 /**
  * The only view of the game: the table seen from straight above, drawn on a
@@ -42,9 +53,25 @@ export class TableView {
   private tableGroup: Group
   private readonly pocketMarkers: Mesh[] = []
   private readonly kitchen: Mesh
-  private readonly cloth = new MeshLambertMaterial()
-  private readonly cushion = new MeshLambertMaterial()
-  private readonly frame = new MeshLambertMaterial()
+  private readonly cloth = new MeshBasicMaterial()
+  private readonly frame = new MeshBasicMaterial({ map: woodTexture() })
+  /** one per rail, so the shading of each faces the playing surface */
+  private readonly cushions = Object.fromEntries(
+    RAILS.map((side) => [
+      side,
+      new MeshBasicMaterial({ map: cushionTexture(side) }),
+    ])
+  ) as Record<RailSide, MeshBasicMaterial>
+  private readonly jaw = new MeshLambertMaterial()
+  private readonly ballShadow = new MeshBasicMaterial({
+    map: shadowTexture(),
+    transparent: true,
+    depthWrite: false,
+  })
+  private readonly pearl = new MeshBasicMaterial({
+    map: pearlTexture(),
+    transparent: true,
+  })
   private readonly aimLine: Line
   private readonly objectLine: Line
   private readonly cueAfterLine: Line
@@ -187,24 +214,40 @@ export class TableView {
       mesh.position.set(x, y, z)
       group.add(mesh)
     }
+    // a dark lip round the frame, then the frame in wood
+    const lip = new MeshBasicMaterial({ color: 0x1a0f08 })
+    box(
+      2 * this.outer.x + R * 0.5,
+      2 * this.outer.y + R * 0.5,
+      lip,
+      0,
+      0,
+      -R * 1.8
+    )
+    const grain = this.frame.map!
+    grain.repeat.set(1, (this.outer.y / this.outer.x) * 4)
     box(2 * this.outer.x, 2 * this.outer.y, this.frame, 0, 0, -R * 1.6)
+    // the bed: cloth with the cushions' shade along its edges
+    this.cloth.map?.dispose()
+    this.cloth.map = clothTexture(X / Y, (1.4 * R) / (2 * Y))
+    this.cloth.needsUpdate = true
     box(2 * X, 2 * Y, this.cloth, 0, 0, -R * 1.2)
     const nose = 1.1 * R
     if (this.info.hasPockets) {
       this.buildPockets(group, nose)
     } else {
-      box(2 * X + 2 * nose, nose, this.cushion, 0, Y + nose / 2, -R * 0.9)
-      box(2 * X + 2 * nose, nose, this.cushion, 0, -Y - nose / 2, -R * 0.9)
-      box(nose, 2 * Y, this.cushion, X + nose / 2, 0, -R * 0.9)
-      box(nose, 2 * Y, this.cushion, -X - nose / 2, 0, -R * 0.9)
+      const c = this.cushions
+      box(2 * X + 2 * nose, nose, c.top, 0, Y + nose / 2, -R * 0.9)
+      box(2 * X + 2 * nose, nose, c.bottom, 0, -Y - nose / 2, -R * 0.9)
+      box(nose, 2 * Y, c.right, X + nose / 2, 0, -R * 0.9)
+      box(nose, 2 * Y, c.left, -X - nose / 2, 0, -R * 0.9)
     }
 
     // diamonds: 8 divisions on the long rails, 4 on the short ones
-    const dot = new CircleGeometry(R * 0.22, 12)
-    const white = new MeshBasicMaterial({ color: 0xf2ead8 })
+    const dot = new CircleGeometry(R * 0.26, 20)
     const inset = nose + (rail - nose) / 2
     const diamond = (x: number, y: number) => {
-      const mesh = new Mesh(dot, white)
+      const mesh = new Mesh(dot, this.pearl)
       mesh.position.set(x, y, -R * 0.6)
       group.add(mesh)
     }
@@ -236,16 +279,18 @@ export class TableView {
     const k = this.info.knuckles
     const segment = (a: Vec2, b: Vec2, vertical: boolean) => {
       const length = vertical ? Math.abs(b.y - a.y) : Math.abs(b.x - a.x)
+      const mx = (a.x + b.x) / 2
+      const my = (a.y + b.y) / 2
+      let side: RailSide = my > 0 ? "top" : "bottom"
+      if (vertical) side = mx > 0 ? "right" : "left"
       const mesh = new Mesh(
         new BoxGeometry(
           vertical ? nose : length,
           vertical ? length : nose,
           R * 0.4
         ),
-        this.cushion
+        this.cushions[side]
       )
-      const mx = (a.x + b.x) / 2
-      const my = (a.y + b.y) / 2
       mesh.position.set(
         vertical ? Math.sign(mx) * (X + nose / 2) : mx,
         vertical ? my : Math.sign(my) * (Y + nose / 2),
@@ -260,11 +305,10 @@ export class TableView {
     segment(k[5], k[9], false) // S -> SE, bottom rail
     segment(k[1], k[10], true) // NW -> SW, left rail
     segment(k[7], k[8], true) // NE -> SE, right rail
-    const jaw = new MeshLambertMaterial({ color: this.cushion.color })
     for (const j of k) {
       const mesh = new Mesh(
         new CylinderGeometry(j.radius, j.radius, R * 0.4, 12),
-        jaw
+        this.jaw
       )
       mesh.rotation.x = Math.PI / 2
       mesh.position.set(j.x, j.y, -R * 0.9)
@@ -351,7 +395,7 @@ export class TableView {
 
   setTheme(theme: Theme) {
     const t = { ...DEFAULT_THEME, ...theme }
-    const set = (material: MeshLambertMaterial, css: string) => {
+    const set = (material: { color: Color }, css: string) => {
       try {
         material.color = new Color(css)
       } catch {
@@ -359,7 +403,10 @@ export class TableView {
       }
     }
     set(this.cloth, t.cloth)
-    set(this.cushion, t.cushion)
+    for (const side of RAILS) {
+      set(this.cushions[side], t.cushion)
+    }
+    set(this.jaw, t.cushion)
     set(this.frame, t.frame)
   }
 
@@ -390,12 +437,25 @@ export class TableView {
     }
   }
 
+  /** Table coordinates -> page pixel. */
+  toPage(x: number, y: number): Vec2 {
+    return {
+      x: this.centre.x + x * this.scale,
+      y: this.centre.y - y * this.scale,
+    }
+  }
+
   pixelsPerUnit(): number {
     return this.scale
   }
 
   addTable(table: Table) {
+    const R = this.info.ballRadius
+    const soft = new PlaneGeometry(R * 3, R * 3)
     table.balls.forEach((b) => {
+      // a soft shadow in place of the flat disc the ball comes with
+      b.ballmesh.shadow.geometry = soft
+      b.ballmesh.shadow.material = this.ballShadow
       this.scene.add(b.ballmesh.mesh)
       this.scene.add(b.ballmesh.shadow)
     })
@@ -417,10 +477,12 @@ export class TableView {
       b.ballmesh.shadow.visible = shown
       if (!shown) continue
       b.ballmesh.updateAll(b, seconds)
+      // the lamps are up and to the left: the shadow falls down and right,
+      // just above the cloth
       b.ballmesh.shadow.position.set(
-        b.pos.x + R * 0.22,
-        b.pos.y - R * 0.22,
-        R * 0.2
+        b.pos.x + R * 0.28,
+        b.pos.y - R * 0.28,
+        -R * 0.98
       )
     }
   }

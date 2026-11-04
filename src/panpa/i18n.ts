@@ -1,8 +1,8 @@
 const TEXT = {
   en: {
     hit: "HIT",
-    left: "L",
-    right: "R",
+    left: "Break: left",
+    right: "Break: right",
     respot: "Respot",
     rerack: "Rerack",
     undo: "Undo",
@@ -25,8 +25,8 @@ const TEXT = {
   },
   tr: {
     hit: "VUR",
-    left: "Sol",
-    right: "Sağ",
+    left: "Açılış: Sol",
+    right: "Açılış: Sağ",
     respot: "Noktaya",
     rerack: "Yeniden diz",
     undo: "Geri al",

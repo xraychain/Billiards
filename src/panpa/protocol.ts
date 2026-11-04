@@ -13,7 +13,7 @@ import {
 export const BRIDGE_VERSION = 1
 
 /** Version of the downloadable bundle; bump on every release. */
-export const BUNDLE_VERSION = "0.2.1"
+export const BUNDLE_VERSION = "0.3.0"
 
 export type Mode = "match" | "spectate" | "practice" | "free"
 
@@ -45,13 +45,9 @@ export interface Prefs {
   quality?: "low" | "mid" | "high"
 }
 
-export type BotLevel = "easy" | "normal" | "hard" | "pro"
-
+/** Practice is played alone; earlier `opponent` / `botLevel` fields are ignored. */
 export interface PracticeOptions {
   raceTo?: number
-  opponent?: "none" | "bot"
-  /** how well the bot plays; "normal" when omitted */
-  botLevel?: BotLevel
   /** shot clock in seconds for the player; 0 or absent = no clock */
   shotClockSec?: number
 }
@@ -103,6 +99,9 @@ export interface Hud {
   scores: [number, number]
   innings: [number, number]
   run: number
+  highRun: [number, number]
+  /** practice: one player at the table; scores[0] / innings[0] is the average */
+  solo: boolean
   turnSeat: Seat | null
   /** true while the local player may shoot */
   canShoot: boolean

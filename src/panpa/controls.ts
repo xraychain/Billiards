@@ -129,7 +129,7 @@ export class Controls {
     const balls = el("div", "thickness-balls", this.thickness)
     this.thicknessObject = el("div", "thickness-object", balls)
     el("div", "thickness-cue", balls)
-    this.thicknessValue = el("div", "thickness-value", this.thickness)
+    this.thicknessValue = el("div", "thickness-value", balls)
     this.thickness.hidden = true
 
     drag(this.pad, (e) => this.movePad(e))
@@ -190,12 +190,17 @@ export class Controls {
     p.left = `${tableArea.x}px`
     p.top = `${tableArea.y + tableArea.h - 44}px`
     p.width = `${tableArea.w}px`
-    const t = this.thickness.style
-    t.left = `${tableArea.x + tableArea.w / 2}px`
-    t.top = `${tableArea.y + tableArea.h / 2}px`
-    const size = Math.round(Math.min(tableArea.h * 0.42, 150))
-    t.setProperty("--thickness-size", `${size}px`)
+    this.thicknessSize = Math.round(
+      Math.min(110, Math.max(64, tableArea.h * 0.26))
+    )
+    this.thickness.style.setProperty(
+      "--thickness-size",
+      `${this.thicknessSize}px`
+    )
   }
+
+  /** side of the cut preview in page pixels */
+  thicknessSize = 96
 
   /**
    * The cut seen from behind the cue ball: the object ball's silhouette
@@ -203,17 +208,24 @@ export class Controls {
    * right), with the thickness of the hit as a percentage. Shown while
    * aiming and shortly after; null when nothing is in the line of aim.
    */
-  showThickness(hit: { overlap: number; colour: string } | null) {
+  showThickness(
+    hit: { overlap: number; colour: string } | null,
+    at: { x: number; y: number } | null = null
+  ) {
+    if (!hit) {
+      // nothing in the line of aim: nothing to preview
+      this.hideThickness()
+      return
+    }
     this.thickness.hidden = false
+    if (at) {
+      this.thickness.style.left = `${at.x}px`
+      this.thickness.style.top = `${at.y}px`
+    }
     if (this.thicknessTimer) {
       clearTimeout(this.thicknessTimer)
     }
     this.thicknessTimer = setTimeout(() => this.hideThickness(), 900)
-    if (!hit) {
-      this.thicknessObject.style.visibility = "hidden"
-      this.thicknessValue.textContent = ""
-      return
-    }
     const percent = Math.round(
       (1 - Math.min(Math.abs(hit.overlap) / 2, 1)) * 100
     )
@@ -279,8 +291,17 @@ export class Controls {
     return min + this.power * (max - min)
   }
 
+  /** The power each shot starts from. */
+  static readonly DEFAULT_POWER = 0.5
+
   resetSpin() {
     this.offset = { x: 0, y: 0 }
+    this.draw()
+  }
+
+  /** After a shot the bar goes back to the starting power. */
+  resetPower() {
+    this.power = Controls.DEFAULT_POWER
     this.draw()
   }
 

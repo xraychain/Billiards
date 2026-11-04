@@ -908,6 +908,35 @@ export function applyPool(
   }
 }
 
+/**
+ * A legal spot for the cue ball in hand (behind the head string when the
+ * rules say so), clear of the other balls by a little air. Pure given `rng`;
+ * `null` when nothing is in hand.
+ */
+export function suggestPlacement(
+  state: MatchState,
+  rng: () => number
+): Vec2 | null {
+  const pool = state.pool
+  if (!pool || pool.ballInHand === "none") {
+    return null
+  }
+  configure(state.config.ruleType)
+  const X = TableGeometry.tableX
+  const Y = TableGeometry.tableY
+  const right = pool.ballInHand === "kitchen" ? spots().headString - R : X
+  for (let i = 0; i < 400; i++) {
+    const p = {
+      x: Math.fround(-X + rng() * (right + X)),
+      y: Math.fround((rng() * 2 - 1) * Y),
+    }
+    if (onCloth(p) && clear(state.balls, p, CUE, R * 0.2)) {
+      return p
+    }
+  }
+  return { x: Math.fround(spots().head), y: 0 }
+}
+
 /** For the suggester: what the shooter should hit first. */
 export function poolTargets(state: MatchState, seat: Seat): number[] {
   const pool = state.pool!
