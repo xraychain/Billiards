@@ -63,7 +63,12 @@ export function clothTexture(aspect: number, edge: number): CanvasTexture {
     g.fillRect(0, 0, w, h)
   }
 
-  // light: two lamps over the table, darker towards the rails
+  // light: brightest in the middle under the lamps, darker towards the rails
+  const centre = g.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, w * 0.5)
+  centre.addColorStop(0, "rgba(255,255,255,0.10)")
+  centre.addColorStop(1, "rgba(255,255,255,0)")
+  g.fillStyle = centre
+  g.fillRect(0, 0, w, h)
   for (const lx of [0.3, 0.7]) {
     const lamp = g.createRadialGradient(
       lx * w,
@@ -95,8 +100,10 @@ export function clothTexture(aspect: number, edge: number): CanvasTexture {
   const e = Math.max(4, edge * h)
   const shade = (x0: number, y0: number, x1: number, y1: number) => {
     const s = g.createLinearGradient(x0, y0, x1, y1)
-    s.addColorStop(0, "rgba(0,0,0,0.30)")
-    s.addColorStop(0.35, "rgba(0,0,0,0.10)")
+    // dark right under the nose (the gap below the overhang), then fading
+    s.addColorStop(0, "rgba(0,0,0,0.55)")
+    s.addColorStop(0.12, "rgba(0,0,0,0.30)")
+    s.addColorStop(0.45, "rgba(0,0,0,0.08)")
     s.addColorStop(1, "rgba(0,0,0,0)")
     g.fillStyle = s
     g.fillRect(
@@ -153,32 +160,6 @@ export function woodTexture(): CanvasTexture {
   t.wrapS = RepeatWrapping
   t.wrapT = RepeatWrapping
   return t
-}
-
-export type RailSide = "top" | "bottom" | "left" | "right"
-
-/**
- * Cushion top: the cloth over the rubber, lit from above, darkening into
- * the nose where it meets the bed. Drawn for one rail so the nose faces
- * the playing surface (canvas top is +y on the table).
- */
-export function cushionTexture(side: RailSide): CanvasTexture {
-  const n = 64
-  const { c, g } = canvas(n, n)
-  const from = {
-    top: [0, 0, 0, n],
-    bottom: [0, n, 0, 0],
-    left: [0, 0, n, 0],
-    right: [n, 0, 0, 0],
-  }[side]
-  const s = g.createLinearGradient(from[0], from[1], from[2], from[3])
-  s.addColorStop(0, "#c4c4c4")
-  s.addColorStop(0.4, "#f4f4f4")
-  s.addColorStop(0.8, "#dcdcdc")
-  s.addColorStop(1, "#6e6e6e")
-  g.fillStyle = s
-  g.fillRect(0, 0, n, n)
-  return texture(c)
 }
 
 /** Soft round shadow, darkest under the ball. */

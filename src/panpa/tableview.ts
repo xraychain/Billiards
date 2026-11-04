@@ -3,7 +3,6 @@ import {
   BoxGeometry,
   BufferGeometry,
   CircleGeometry,
-  CylinderGeometry,
   Color,
   DirectionalLight,
   Group,
@@ -12,6 +11,7 @@ import {
   Mesh,
   MeshBasicMaterial,
   MeshLambertMaterial,
+  DoubleSide,
   OrthographicCamera,
   PlaneGeometry,
   RingGeometry,
@@ -23,22 +23,20 @@ import { tableInfo } from "../engine/rules/threecushion"
 import { RuleType, Vec2 } from "../engine/types"
 import { Table } from "../model/table"
 import { Rect, Theme } from "./protocol"
+import { cushion, roundedRect } from "./railgeometry"
 import {
   clothTexture,
-  cushionTexture,
   pearlTexture,
-  RailSide,
   shadowTexture,
   woodTexture,
 } from "./textures"
 
+/** The cushions are covered in the same cloth as the bed. */
 const DEFAULT_THEME: Required<Theme> = {
-  cloth: "#1f62b2",
-  cushion: "#1d5aa3",
-  frame: "#6a4026",
+  cloth: "#1e6cc8",
+  cushion: "#1e6cc8",
+  frame: "#5a3826",
 }
-
-const RAILS: RailSide[] = ["top", "bottom", "left", "right"]
 
 /**
  * The only view of the game: the table seen from straight above, drawn on a
@@ -55,14 +53,11 @@ export class TableView {
   private readonly kitchen: Mesh
   private readonly cloth = new MeshBasicMaterial()
   private readonly frame = new MeshBasicMaterial({ map: woodTexture() })
-  /** one per rail, so the shading of each faces the playing surface */
-  private readonly cushions = Object.fromEntries(
-    RAILS.map((side) => [
-      side,
-      new MeshBasicMaterial({ map: cushionTexture(side) }),
-    ])
-  ) as Record<RailSide, MeshBasicMaterial>
-  private readonly jaw = new MeshLambertMaterial()
+  /** cushions carry their slope's shading in vertex colours */
+  private readonly cushion = new MeshBasicMaterial({
+    vertexColors: true,
+    side: DoubleSide,
+  })
   private readonly ballShadow = new MeshBasicMaterial({
     map: shadowTexture(),
     transparent: true,
@@ -208,39 +203,82 @@ export class TableView {
     const X = this.info.halfLength + R
     const Y = this.info.halfWidth + R
     const rail = 3.4 * R
+    const nose = 1.1 * R
     const group = new Group()
-    const box = (w: number, h: number, material, x = 0, y = 0, z = 0) => {
-      const mesh = new Mesh(new BoxGeometry(w, h, R * 0.4), material)
-      mesh.position.set(x, y, z)
+    const flat = (geometry, material, z: number) => {
+      const mesh = new Mesh(geometry, material)
+      mesh.position.z = z
       group.add(mesh)
     }
-    // a dark lip round the frame, then the frame in wood
-    const lip = new MeshBasicMaterial({ color: 0x1a0f08 })
-    box(
-      2 * this.outer.x + R * 0.5,
-      2 * this.outer.y + R * 0.5,
+    // the frame: walnut with rounded corners, on a dark lip
+    const lip = new MeshBasicMaterial({ color: 0x140b06 })
+    const corner = 1.6 * R
+    flat(
+      roundedRect(
+        this.outer.x + R * 0.25,
+        this.outer.y + R * 0.25,
+        corner + R * 0.25
+      ),
       lip,
-      0,
-      0,
-      -R * 1.8
+      -R * 1.6
     )
     const grain = this.frame.map!
     grain.repeat.set(1, (this.outer.y / this.outer.x) * 4)
-    box(2 * this.outer.x, 2 * this.outer.y, this.frame, 0, 0, -R * 1.6)
-    // the bed: cloth with the cushions' shade along its edges
+    flat(roundedRect(this.outer.x, this.outer.y, corner), this.frame, -R * 1.4)
+    // the joint between the wooden rail and the cushion rubber
+    flat(
+      roundedRect(X + nose + R * 0.12, Y + nose + R * 0.12, R * 0.15),
+      lip,
+      -R * 1.2
+    )
+    // the bed: cloth with the shade under the cushion noses along its edges
     this.cloth.map?.dispose()
     this.cloth.map = clothTexture(X / Y, (1.4 * R) / (2 * Y))
     this.cloth.needsUpdate = true
-    box(2 * X, 2 * Y, this.cloth, 0, 0, -R * 1.2)
-    const nose = 1.1 * R
+    flat(roundedRect(X, Y, 0), this.cloth, -R * 1.0)
     if (this.info.hasPockets) {
       this.buildPockets(group, nose)
     } else {
-      const c = this.cushions
-      box(2 * X + 2 * nose, nose, c.top, 0, Y + nose / 2, -R * 0.9)
-      box(2 * X + 2 * nose, nose, c.bottom, 0, -Y - nose / 2, -R * 0.9)
-      box(nose, 2 * Y, c.right, X + nose / 2, 0, -R * 0.9)
-      box(nose, 2 * Y, c.left, -X - nose / 2, 0, -R * 0.9)
+      // four wedges meeting at mitred corners
+      const z = -R * 0.75
+      const B = { x: X + nose, y: Y + nose }
+      const add = (g) => flat(g, this.cushion, 0)
+      add(
+        cushion(
+          { x: -X, y: Y },
+          { x: X, y: Y },
+          { x: B.x, y: B.y },
+          { x: -B.x, y: B.y },
+          z
+        )
+      )
+      add(
+        cushion(
+          { x: -X, y: -Y },
+          { x: X, y: -Y },
+          { x: B.x, y: -B.y },
+          { x: -B.x, y: -B.y },
+          z
+        )
+      )
+      add(
+        cushion(
+          { x: X, y: -Y },
+          { x: X, y: Y },
+          { x: B.x, y: B.y },
+          { x: B.x, y: -B.y },
+          z
+        )
+      )
+      add(
+        cushion(
+          { x: -X, y: -Y },
+          { x: -X, y: Y },
+          { x: -B.x, y: B.y },
+          { x: -B.x, y: -B.y },
+          z
+        )
+      )
     }
 
     // diamonds: 8 divisions on the long rails, 4 on the short ones
@@ -277,24 +315,28 @@ export class TableView {
     const X = this.info.halfLength + R
     const Y = this.info.halfWidth + R
     const k = this.info.knuckles
+    const z = -R * 0.75
+    // the wedge's back reaches past its nose towards the pocket: the jaws
+    const jaw = nose * 0.55
     const segment = (a: Vec2, b: Vec2, vertical: boolean) => {
-      const length = vertical ? Math.abs(b.y - a.y) : Math.abs(b.x - a.x)
-      const mx = (a.x + b.x) / 2
-      const my = (a.y + b.y) / 2
-      let side: RailSide = my > 0 ? "top" : "bottom"
-      if (vertical) side = mx > 0 ? "right" : "left"
+      const along = vertical ? "y" : "x"
+      const across = vertical ? "x" : "y"
+      const lo = a[along] < b[along] ? a : b
+      const hi = a[along] < b[along] ? b : a
+      const sign = Math.sign(vertical ? (a.x + b.x) / 2 : (a.y + b.y) / 2)
+      const noseAt = sign * (vertical ? X : Y)
+      const backAt = sign * ((vertical ? X : Y) + nose)
+      const p = (u: number, v: number) =>
+        ({ [along]: u, [across]: v }) as unknown as Vec2
       const mesh = new Mesh(
-        new BoxGeometry(
-          vertical ? nose : length,
-          vertical ? length : nose,
-          R * 0.4
+        cushion(
+          p(lo[along], noseAt),
+          p(hi[along], noseAt),
+          p(hi[along] + jaw, backAt),
+          p(lo[along] - jaw, backAt),
+          z
         ),
-        this.cushions[side]
-      )
-      mesh.position.set(
-        vertical ? Math.sign(mx) * (X + nose / 2) : mx,
-        vertical ? my : Math.sign(my) * (Y + nose / 2),
-        -R * 0.9
+        this.cushion
       )
       group.add(mesh)
     }
@@ -305,21 +347,12 @@ export class TableView {
     segment(k[5], k[9], false) // S -> SE, bottom rail
     segment(k[1], k[10], true) // NW -> SW, left rail
     segment(k[7], k[8], true) // NE -> SE, right rail
-    for (const j of k) {
-      const mesh = new Mesh(
-        new CylinderGeometry(j.radius, j.radius, R * 0.4, 12),
-        this.jaw
-      )
-      mesh.rotation.x = Math.PI / 2
-      mesh.position.set(j.x, j.y, -R * 0.9)
-      group.add(mesh)
-    }
     const hole = new MeshBasicMaterial({ color: 0x0b0b10 })
     this.pocketMarkers.forEach((m) => this.scene.remove(m))
     this.pocketMarkers.length = 0
     for (const p of this.info.pockets) {
       const mesh = new Mesh(new CircleGeometry(p.radius, 24), hole)
-      mesh.position.set(p.x, p.y, -R * 1.0)
+      mesh.position.set(p.x, p.y, -R * 0.985)
       group.add(mesh)
       const marker = new Mesh(
         new RingGeometry(p.radius * 0.9, p.radius * 1.15, 32),
@@ -369,7 +402,7 @@ export class TableView {
       const right = this.info.headString
       const Y = this.info.halfWidth + R
       this.kitchen.scale.set(right - left, 2 * Y, 1)
-      this.kitchen.position.set((left + right) / 2, 0, -R * 1.1)
+      this.kitchen.position.set((left + right) / 2, 0, -R * 0.99)
     }
   }
 
@@ -403,10 +436,7 @@ export class TableView {
       }
     }
     set(this.cloth, t.cloth)
-    for (const side of RAILS) {
-      set(this.cushions[side], t.cushion)
-    }
-    set(this.jaw, t.cushion)
+    set(this.cushion, t.cushion)
     set(this.frame, t.frame)
   }
 
