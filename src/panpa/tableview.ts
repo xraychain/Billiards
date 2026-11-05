@@ -301,9 +301,15 @@ export class TableView {
       diamond(-X - inset, y)
     }
     if (!this.info.hasPockets) {
+      // a carom table marks each corner on both rails; the systems count
+      // the corner (50) halfway between the two marks
       for (const x of [-X, X]) {
         diamond(x, Y + inset)
         diamond(x, -Y - inset)
+      }
+      for (const y of [-Y, Y]) {
+        diamond(X + inset, y)
+        diamond(-X - inset, y)
       }
     }
     return group

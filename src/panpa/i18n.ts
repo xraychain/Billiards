@@ -22,6 +22,9 @@ const TEXT = {
     rerackOffenderBreaks: "Re-rack, they break",
     rebreak: "Break again",
     spotEight: "Spot the 8",
+    normal: "Normal",
+    follow: "Follow",
+    stop: "Stop",
   },
   tr: {
     hit: "VUR",
@@ -46,6 +49,9 @@ const TEXT = {
     rerackOffenderBreaks: "Yeniden diz, o açsın",
     rebreak: "Yeniden aç",
     spotEight: "8'i noktaya koy",
+    normal: "Normal",
+    follow: "Sürme",
+    stop: "Stop",
   },
 }
 

@@ -1,12 +1,19 @@
 import { Shot, ShotLimits, Side, Vec2 } from "../engine/types"
 import { t, TextKey } from "./i18n"
 import { CommandName, Rect } from "./protocol"
+import { Stroke, STROKES } from "./stroke"
 
 export interface Prompt {
   /** a line of guidance for the player */
   text: string
   /** buttons, by id (an i18n key) */
   buttons: { id: string; label?: string; on?: boolean }[]
+}
+
+/** The strike point and stroke as the player set them. */
+export interface Pad {
+  offset: Vec2
+  stroke: Stroke
 }
 
 export interface ControlHandlers {
@@ -88,6 +95,8 @@ export class Controls {
   /** 0..1 of the power range */
   power = 0.5
   side: Side = "right"
+  /** normal, follow (sürme) or stop; kept from shot to shot */
+  stroke: Stroke = "normal"
 
   private readonly root: HTMLElement
   private readonly pad: HTMLElement
@@ -96,6 +105,7 @@ export class Controls {
   private readonly fill: HTMLElement
   private readonly hit: HTMLButtonElement
   private readonly sideButton: HTMLButtonElement
+  private readonly strokeButton: HTMLButtonElement
   private readonly respot: HTMLButtonElement
   private readonly tools: HTMLElement
   private readonly toolButtons = new Map<CommandName, HTMLButtonElement>()
@@ -109,7 +119,7 @@ export class Controls {
 
   constructor(
     host: HTMLElement,
-    private readonly limits: ShotLimits,
+    private limits: ShotLimits,
     private readonly handlers: ControlHandlers
   ) {
     this.root = el("div", "controls", host)
@@ -117,6 +127,7 @@ export class Controls {
     this.tip = el("div", "tip", this.pad)
     this.bar = el("div", "bar", this.root)
     this.fill = el("div", "fill", this.bar)
+    this.strokeButton = el("button", "small", this.root) as HTMLButtonElement
     this.sideButton = el("button", "small", this.root) as HTMLButtonElement
     this.respot = el("button", "small", this.root) as HTMLButtonElement
     this.hit = el("button", "hit", this.root) as HTMLButtonElement
@@ -139,6 +150,12 @@ export class Controls {
     }
     this.hit.addEventListener("click", () => this.handlers.onHit())
     this.respot.addEventListener("click", () => this.handlers.onRespot())
+    this.strokeButton.addEventListener("click", () => {
+      const next = (STROKES.indexOf(this.stroke) + 1) % STROKES.length
+      this.stroke = STROKES[next]
+      this.refreshText()
+      this.handlers.onChange()
+    })
     this.sideButton.addEventListener("click", () => {
       this.side = this.side === "left" ? "right" : "left"
       this.refreshText()
@@ -160,6 +177,8 @@ export class Controls {
     this.hit.textContent = t("hit")
     this.respot.textContent = t("respot")
     this.sideButton.textContent = t(this.side)
+    this.strokeButton.textContent = t(this.stroke)
+    this.strokeButton.classList.toggle("on", this.stroke !== "normal")
     this.toolButtons.forEach((button, name) => {
       button.textContent = t(name as TextKey)
     })
@@ -175,7 +194,8 @@ export class Controls {
     const pad = Math.round(area.w * 0.86)
     this.pad.style.width = `${pad}px`
     this.pad.style.height = `${pad}px`
-    const tip = Math.round(pad * 0.22)
+    // the tip: a fifth of the ball, its edge stops at the ball's edge
+    const tip = Math.round(pad * 0.2)
     this.tip.style.width = `${tip}px`
     this.tip.style.height = `${tip}px`
   }
@@ -259,11 +279,24 @@ export class Controls {
     })
   }
 
-  /** Put a shot's strike point and power on the controls. */
-  setShot(shot: Shot, limits: ShotLimits) {
-    this.offset = { x: shot.offset.x, y: shot.offset.y }
-    const [min, max] = limits.power
-    this.power = Math.min(1, Math.max(0, (shot.power - min) / (max - min)))
+  padState(): Pad {
+    return { offset: { ...this.offset }, stroke: this.stroke }
+  }
+
+  /**
+   * Put a shot's strike point and power on the controls; `pad` restores the
+   * player's own point and stroke where the shot carries a stroke's height.
+   */
+  setShot(shot: Shot, limits: ShotLimits, pad?: Pad) {
+    this.limits = limits
+    this.offset = pad
+      ? { ...pad.offset }
+      : { x: shot.offset.x, y: shot.offset.y }
+    if (pad) {
+      this.stroke = pad.stroke
+      this.refreshText()
+    }
+    this.power = Controls.barFor(shot.power, limits)
     this.draw()
   }
 
@@ -285,10 +318,22 @@ export class Controls {
     }
   }
 
+  /** The table's limits: a carom table's hardest shot is slower. */
+  setLimits(limits: ShotLimits) {
+    this.limits = limits
+  }
+
   /** Power in engine units. */
   shotPower(): number {
     const [min, max] = this.limits.power
-    return min + this.power * (max - min)
+    return min + Math.pow(this.power, this.limits.powerCurve ?? 1) * (max - min)
+  }
+
+  /** Where on the bar a shot's power sits. */
+  static barFor(power: number, limits: ShotLimits): number {
+    const [min, max] = limits.power
+    const share = Math.min(1, Math.max(0, (power - min) / (max - min)))
+    return Math.pow(share, 1 / (limits.powerCurve ?? 1))
   }
 
   /** The power each shot starts from. */

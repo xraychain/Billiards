@@ -4,7 +4,7 @@ import {
   ENGINE_VERSION,
   frozenTo,
   RULE_TYPES,
-  SHOT_LIMITS,
+  shotLimits,
   suggestCall,
   suggestPlacement,
   suggestShot,
@@ -20,12 +20,13 @@ import {
   Seat,
   Shot,
   ShotEvent,
+  Vec2,
 } from "../engine/types"
 import { Overlap } from "../utils/overlap"
 import { unitAtAngle } from "../utils/three-utils"
 import { Sound } from "../view/sound"
 import { Bridge } from "./bridge"
-import { Controls, Prompt } from "./controls"
+import { Controls, Pad, Prompt } from "./controls"
 import { setLocale, t } from "./i18n"
 import {
   BRIDGE_VERSION,
@@ -44,6 +45,7 @@ import { previewSpot } from "./previewspot"
 import { selfCheck } from "./selfcheck"
 import { stayAtTable } from "./solo"
 import { ShotPlayer } from "./shotplayer"
+import { cushionDistance, strokeY } from "./stroke"
 import { TableView } from "./tableview"
 
 /** Balls further than this from where the server put them are reported. */
@@ -63,6 +65,8 @@ interface PracticeStep {
   state: MatchState
   /** the shot played from it; null when the balls were moved by hand */
   action: Action | null
+  /** the pad as the player set it; the shot may carry a stroke's height */
+  pad?: Pad
 }
 
 /** "0.5.2" and "0.5.9" are compatible; before 1.0 the minor is breaking. */
@@ -143,7 +147,7 @@ export class Game {
   ) {
     this.player = new ShotPlayer(this.ruleType, this.newMatch(10).balls, true)
     this.view.addTable(this.player.table)
-    this.controls = new Controls(host, SHOT_LIMITS, {
+    this.controls = new Controls(host, shotLimits("threecushion"), {
       onChange: () => this.sendAim(),
       onSide: () => this.sideChanged(),
       onHit: () => this.hit(),
@@ -283,11 +287,13 @@ export class Game {
     }
     this.tableRect = tableArea
     this.view.layout(innerWidth, innerHeight, tableArea)
+    // a tall strip: the ball higher up, room for a long power bar
+    const h = Math.min(380, innerHeight - 16)
     this.controls.layout({
       x: innerWidth - strip - 8,
-      y: Math.max(8, innerHeight - 260),
+      y: innerHeight - h - 8,
       w: strip,
-      h: Math.min(252, innerHeight - 16),
+      h,
     })
     this.controls.layoutTools(tableArea)
   }
@@ -307,6 +313,7 @@ export class Game {
       return
     }
     this.ruleType = ruleType
+    this.controls.setLimits(shotLimits(ruleType))
     this.view.removeTable(this.player.table)
     this.view.setRule(ruleType)
     this.player = new ShotPlayer(ruleType, this.newMatch(10).balls, true)
@@ -711,14 +718,38 @@ export class Game {
   }
 
   private shot(): Shot {
+    const offset = this.strikePoint()
     return {
       angle: Math.fround(this.angle),
       power: Math.fround(this.controls.shotPower()),
       elevation: 0,
       offset: {
-        x: Math.fround(this.controls.offset.x),
-        y: Math.fround(this.controls.offset.y),
+        x: Math.fround(offset.x),
+        y: Math.fround(offset.y),
       },
+    }
+  }
+
+  /**
+   * Where the tip meets the cue ball: the pad's point, except that a follow
+   * or stop stroke works out the height for the first contact on this aim.
+   */
+  private strikePoint(): Vec2 {
+    const { x, y } = this.controls.offset
+    const cueBall = this.cueBall()
+    if (this.controls.stroke === "normal" || cueBall === null) {
+      return { x, y }
+    }
+    return {
+      x,
+      y: strokeY(
+        this.controls.stroke,
+        y,
+        this.firstContact(cueBall).distance,
+        this.controls.shotPower(),
+        x,
+        shotLimits(this.ruleType).offsetMax
+      ),
     }
   }
 
@@ -836,7 +867,7 @@ export class Game {
             : { type: "call", shotNo: s.shotNo, ...call }
         )
         this.angle = shot.angle
-        this.controls.setShot(shot, SHOT_LIMITS)
+        this.controls.setShot(shot, shotLimits(this.ruleType))
         this.hit()
         return
       }
@@ -845,8 +876,10 @@ export class Game {
       const shot = suggestShot(this.state, seat, Math.random, { tries: 40 })
       this.angle = shot.angle
       this.controls.offset = shot.offset
-      const [min, max] = SHOT_LIMITS.power
-      this.controls.power = (shot.power - min) / (max - min)
+      this.controls.power = Controls.barFor(
+        shot.power,
+        shotLimits(this.ruleType)
+      )
     } else if (this.canShootFree()) {
       this.angle = Math.random() * 2 * Math.PI
     }
@@ -874,7 +907,11 @@ export class Game {
       this.error(result.code, false, result.reason)
       return
     }
-    const step = { state: before, action }
+    const step: PracticeStep = {
+      state: before,
+      action,
+      pad: this.controls.padState(),
+    }
     this.history.push(step)
     this.lastPlayed = step
     stayAtTable(seat, result.state, result.events)
@@ -1028,7 +1065,7 @@ export class Game {
     }
     if (step.action) {
       this.lastPlayed = step
-      this.showShot(step.action)
+      this.showShot(step.action, step.pad)
     }
     this.refereeState = step.state
     this.refereeShown = false
@@ -1044,17 +1081,17 @@ export class Game {
     this.refereeState = step.state
     this.refereeShown = false
     this.show(step.state)
-    this.showShot(step.action)
+    this.showShot(step.action, step.pad)
     this.act(step.state.turnSeat, step.action)
   }
 
   /** Put a shot's aim, strike point and power back on the controls. */
-  private showShot(action: Action) {
+  private showShot(action: Action, pad?: Pad) {
     if (action.type !== "shoot") {
       return
     }
     this.angle = action.shot.angle
-    this.controls.setShot(action.shot, SHOT_LIMITS)
+    this.controls.setShot(action.shot, shotLimits(this.ruleType), pad)
     if (action.side) {
       this.controls.side = action.side
       this.controls.refreshText()
@@ -1240,8 +1277,12 @@ export class Game {
     this.showThickness(cueBall)
   }
 
-  /** The cut on the first ball in the line of aim, while aiming. */
-  private showThickness(cueBall: number) {
+  /**
+   * The first thing in the line of aim: the ball it meets, with the ghost
+   * ball (where the cue ball is at that moment), or else the cushion; and
+   * how far the cue ball travels to get there.
+   */
+  private firstContact(cueBall: number) {
     const table = this.player.table
     const cue = table.balls[cueBall].pos
     const dir = unitAtAngle(this.angle)
@@ -1249,16 +1290,30 @@ export class Game {
       table.balls.filter((b) => b.onTable())
     ).getOverlapOffset(table.balls[cueBall], dir)
     if (!hit) {
-      this.controls.showThickness(null)
-      return
+      const { halfLength, halfWidth } = this.view.bounds
+      const distance = cushionDistance(cue, dir, halfLength, halfWidth)
+      return { cue, dir, hit: null, ghost: null, distance }
     }
-    // the ghost ball: where the cue ball is when it meets the object ball
     const R = this.radius()
     const to = hit.ball.pos.clone().sub(cue)
     const along = to.dot(dir)
     const off = Math.min(2 * R, Math.abs(hit.overlap) * R)
-    const ghostAt = along - Math.sqrt(Math.max(0, 4 * R * R - off * off))
-    const ghost = cue.clone().addScaledVector(dir, Math.max(0, ghostAt))
+    const ghostAt = Math.max(
+      0,
+      along - Math.sqrt(Math.max(0, 4 * R * R - off * off))
+    )
+    const ghost = cue.clone().addScaledVector(dir, ghostAt)
+    return { cue, dir, hit, ghost, distance: ghostAt }
+  }
+
+  /** The cut on the first ball in the line of aim, while aiming. */
+  private showThickness(cueBall: number) {
+    const { cue, dir, hit, ghost } = this.firstContact(cueBall)
+    if (!hit || !ghost) {
+      this.controls.showThickness(null)
+      return
+    }
+    const R = this.radius()
     const page = (p: { x: number; y: number }) => this.view.toPage(p.x, p.y)
     const at = previewSpot({
       cue: page(cue),

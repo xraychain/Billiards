@@ -31,13 +31,33 @@ export let I: number
 export let e = 0.86 // Han cushion coefficient of restitution - unused
 export let muC = 0.85 // Han cushion friction- unused
 
-// Fixed angle of cushion contact point above ball center
-export const sinθ = 2 / 5
-// Fixed angle of cushion contact point above ball center
-export const cosθ = Math.sqrt(21) / 5
+// Angle of cushion contact point above ball center (set per table)
+export let sinθ = 2 / 5
+// Angle of cushion contact point above ball center (set per table)
+export let cosθ = Math.sqrt(21) / 5
 
-export const offCenterLimit = 0.45
-export const maxPower = 160 * R
+// Share of the side the tip gives that turns into spin (set per table)
+export let sideSpin = 1
+
+// How far from centre the tip actually strikes for a strike point on the pad:
+// the pad's furthest point (the tip's edge at the ball's edge) is a real
+// offset of tipReach × offCenterLimit (set per table)
+export let tipReach = 1
+
+// Speed lost to an off-centre hit: the ball leaves at 1 / (1 + tipLoss · b²)
+// of a centre hit's speed for a real offset b (in R), after Alciatore TP A.30.
+// 0 keeps the original 1 − 0.25 · b² (set per table)
+export let tipLoss = 0
+
+// Cushion friction falls as the ball runs faster along the rubber:
+// μw / (1 + μwFade · speed along the cushion in m/s). 0 keeps it constant
+// (set per table)
+export let μwFade = 0
+
+// The pad shows the cue ball: its edge is 0.5. A tip a fifth of the ball's
+// width (11.9 mm on 61.5 mm) reaches the edge with its centre at 0.4.
+export const offCenterLimit = 0.4
+export const maxPower = 176 * R
 
 refresh()
 
@@ -90,4 +110,26 @@ export function setstronge_e_n(val: number) {
 }
 export function setstronge_μ(val: number) {
   stronge_μ = val
+}
+
+export function settipReach(val: number) {
+  tipReach = val
+}
+
+export function settipLoss(val: number) {
+  tipLoss = val
+}
+
+export function setμwFade(val: number) {
+  μwFade = val
+}
+
+export function setsideSpin(val: number) {
+  sideSpin = val
+}
+
+/** height of the cushion's contact point above the ball centre, as sin θ */
+export function setsinθ(val: number) {
+  sinθ = val
+  cosθ = Math.sqrt(1 - val * val)
 }

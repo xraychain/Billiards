@@ -45,7 +45,8 @@ body {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
+  justify-content: flex-end;
+  gap: 8px;
   pointer-events: auto;
   transition: opacity 0.15s;
 }
@@ -72,7 +73,7 @@ body {
 
 .tip {
   position: absolute;
-  width: 22%;
+  width: 20%;
   aspect-ratio: 1;
   box-sizing: border-box;
   border-radius: 50%;
@@ -86,8 +87,9 @@ body {
   position: relative;
   flex: 1 1 40px;
   min-height: 32px;
-  width: 38%;
-  border-radius: 6px;
+  max-height: 260px;
+  width: 46%;
+  border-radius: 8px;
   background: rgb(0 0 0 / 55%);
   box-shadow: inset 0 0 0 1px rgb(255 255 255 / 35%);
   overflow: hidden;
@@ -121,6 +123,10 @@ body {
   flex: none;
   width: 92%;
   padding: 4px 0;
+}
+
+.controls .small.on {
+  background: #2f6fd0;
 }
 
 .controls .hit {

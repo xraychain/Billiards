@@ -1,9 +1,10 @@
 import { callFor, poolTargets, previewVerdict } from "./pool/pool"
 import { rulesFor } from "./rules"
 import * as threecushion from "./rules/threecushion"
-import { SHOT_LIMITS, targetFor } from "./match"
+import { shotLimits } from "./common"
+import { targetFor } from "./match"
 import { simulateShot } from "./simulate"
-import { BallState, MatchState, Seat, Shot } from "./types"
+import { BallState, MatchState, Seat, Shot, ShotLimits } from "./types"
 
 export interface SuggestOptions {
   /** candidate shots to simulate before settling for a legal miss */
@@ -23,15 +24,20 @@ function gauss(rng: () => number): number {
 }
 
 /** The shot as an imperfect player would deliver it. */
-function unsteady(shot: Shot, aimError: number, rng: () => number): Shot {
-  const [pMin, pMax] = SHOT_LIMITS.power
+function unsteady(
+  shot: Shot,
+  aimError: number,
+  rng: () => number,
+  limits: ShotLimits
+): Shot {
+  const [pMin, pMax] = limits.power
   // one degree of aim goes with about 6% of power and 0.035 of strike point
   const scale = aimError / (Math.PI / 180)
   const power = shot.power * (1 + gauss(rng) * 0.06 * scale)
   let x = shot.offset.x + gauss(rng) * 0.035 * scale
   let y = shot.offset.y + gauss(rng) * 0.035 * scale
   const length = Math.hypot(x, y)
-  const limit = SHOT_LIMITS.offsetMax * 0.98
+  const limit = limits.offsetMax * 0.98
   if (length > limit) {
     x *= limit / length
     y *= limit / length
@@ -49,9 +55,10 @@ function candidate(
   balls: BallState[],
   cueBall: number,
   targets: number[],
-  rng: () => number
+  rng: () => number,
+  limits: ShotLimits
 ): Shot {
-  const [pMin, pMax] = SHOT_LIMITS.power
+  const [pMin, pMax] = limits.power
   const c = balls[cueBall]
   let angle = (rng() * 2 - 1) * Math.PI
   if (rng() < 0.8) {
@@ -63,7 +70,7 @@ function candidate(
     const cone = Math.asin(Math.min(1, (2 * ballRadius) / dist))
     angle = centre + (rng() * 2 - 1) * cone * 0.95
   }
-  const spin = rng() * SHOT_LIMITS.offsetMax * 0.9
+  const spin = rng() * limits.offsetMax * 0.9
   const spinAngle = rng() * 2 * Math.PI
   return {
     angle: Math.fround(angle),
@@ -90,6 +97,7 @@ export function suggestShot(
   options: SuggestOptions = {}
 ): Shot {
   const tries = Math.max(1, options.tries ?? 150)
+  const limits = shotLimits(state.config.ruleType)
   const cueBall = state.cueBallOf[seat]
   if (state.pool) {
     return suggestPoolShot(state, seat, rng, tries, options.aimError ?? 0)
@@ -108,7 +116,7 @@ export function suggestShot(
   let legal: Shot | undefined
   let first: Shot | undefined
   for (let n = 0; n < tries; n++) {
-    const shot = candidate(state.balls, cueBall, targets, rng)
+    const shot = candidate(state.balls, cueBall, targets, rng, limits)
     first ??= shot
     let events
     try {
@@ -133,7 +141,7 @@ export function suggestShot(
   }
   const chosen = legal ?? first!
   const aimError = options.aimError ?? 0
-  return aimError > 0 ? unsteady(chosen, aimError, rng) : chosen
+  return aimError > 0 ? unsteady(chosen, aimError, rng, limits) : chosen
 }
 
 /** Pool: the first candidate that pockets a legal ball, else a legal shot. */
@@ -144,6 +152,7 @@ function suggestPoolShot(
   tries: number,
   aimError: number
 ): Shot {
+  const limits = shotLimits(state.config.ruleType)
   const cueBall = state.cueBallOf[seat]
   const targets = poolTargets(state, seat)
   // balls are indexed by id; pocketed ones never appear among the targets
@@ -151,7 +160,7 @@ function suggestPoolShot(
   let legal: Shot | undefined
   let first: Shot | undefined
   for (let n = 0; n < tries; n++) {
-    const shot = candidate(balls, cueBall, targets, rng)
+    const shot = candidate(balls, cueBall, targets, rng, limits)
     first ??= shot
     let events
     try {
@@ -175,7 +184,7 @@ function suggestPoolShot(
     legal ??= shot
   }
   const chosen = legal ?? first!
-  return aimError > 0 ? unsteady(chosen, aimError, rng) : chosen
+  return aimError > 0 ? unsteady(chosen, aimError, rng, limits) : chosen
 }
 
 /**

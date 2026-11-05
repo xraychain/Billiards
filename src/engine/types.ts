@@ -328,6 +328,11 @@ export interface ShotLimits {
   power: [number, number]
   offsetMax: number
   elevation: [number, number]
+  /**
+   * How a power bar reads these limits: speed = min + (max − min) · bar^curve.
+   * 1 (or absent) is linear; above 1 keeps the lower half of the bar fine.
+   */
+  powerCurve?: number
 }
 
 export interface Frame {

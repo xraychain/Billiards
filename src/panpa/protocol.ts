@@ -13,7 +13,7 @@ import {
 export const BRIDGE_VERSION = 1
 
 /** Version of the downloadable bundle; bump on every release. */
-export const BUNDLE_VERSION = "0.3.1"
+export const BUNDLE_VERSION = "0.8.0"
 
 export type Mode = "match" | "spectate" | "practice" | "free"
 

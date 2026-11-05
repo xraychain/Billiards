@@ -1,5 +1,5 @@
 import { atan2, cos, sin, sqrt } from "../../utils/utils"
-import { cosθ, sinθ } from "./constants"
+import { cosθ, sinθ, μwFade } from "./constants"
 
 export class Mathavan {
   // work done
@@ -116,9 +116,18 @@ export class Mathavan {
     }
   }
 
+  /**
+   * Cushion friction. A ball running fast along the rubber (a shallow
+   * approach) grips it less; the slip that spin causes does not count, so a
+   * square hit with side still takes the full grip.
+   */
+  private grip(): number {
+    return this.μw / (1 + μwFade * Math.abs(this.vx))
+  }
+
   private updateVelocity(ΔP: number): void {
     const μs = this.μs
-    const μw = this.μw
+    const μw = this.grip()
     const M = this.M
 
     // Update centroid velocity components
@@ -136,7 +145,7 @@ export class Mathavan {
 
   private updateAngularVelocity(ΔP: number): void {
     const μs = this.μs
-    const μw = this.μw
+    const μw = this.grip()
     const M = this.M
     const R = this.R
 

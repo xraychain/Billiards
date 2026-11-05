@@ -1,7 +1,23 @@
 import { Vector3 } from "three"
 import { sin, cos, hypot } from "../../utils/utils"
 import { norm, upCross, up } from "../../utils/three-utils"
-import { muS, muC, g, m, Mz, Mxy, R, I, e, ee, μs, μw } from "./constants"
+import {
+  muS,
+  muC,
+  g,
+  m,
+  Mz,
+  Mxy,
+  R,
+  I,
+  e,
+  ee,
+  μs,
+  μw,
+  sideSpin,
+  tipReach,
+  tipLoss,
+} from "./constants"
 import { Mathavan } from "./mathavan"
 
 export function surfaceVelocity(v, w) {
@@ -236,6 +252,15 @@ export interface CueStrike {
 }
 
 /**
+ * The ball's speed off the tip for a strike point on the pad (x, y in the
+ * pad's units): a hit away from centre sends it slower.
+ */
+export function strikeSpeed(power: number, x: number, y: number): number {
+  const b2 = (x * x + y * y) * tipReach * tipReach
+  return tipLoss > 0 ? power / (1 + tipLoss * b2) : power * (1 - 0.25 * b2)
+}
+
+/**
  * Resolve a cue strike into linear and angular velocity.
  */
 export function cueStrike(
@@ -244,13 +269,18 @@ export function cueStrike(
   offset: Vector3,
   elevation: number = 0
 ): CueStrike {
-  const speed = power * (1 - 0.25 * offset.lengthSq())
+  const speed = strikeSpeed(power, offset.x, offset.y)
   const vel = norm(new Vector3(cos(angle), sin(angle), 0)).multiplyScalar(speed)
   const velCos = vel.clone().multiplyScalar(cos(elevation))
+  const spinOffset = new Vector3(
+    offset.x * tipReach * sideSpin,
+    offset.y * tipReach,
+    offset.z
+  )
 
   return {
     vel: velCos,
-    rvel: cueToSpin(offset, vel, elevation),
+    rvel: cueToSpin(spinOffset, vel, elevation),
   }
 }
 

@@ -2,6 +2,7 @@ export {
   ENGINE_VERSION,
   RULE_TYPES,
   SHOT_LIMITS,
+  shotLimits,
   createMatch,
   extensionsFor,
   applyAction,

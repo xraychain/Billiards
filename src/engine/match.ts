@@ -6,6 +6,7 @@ import {
   isInt,
   other,
   SHOT_LIMITS,
+  shotLimits,
   stateHash,
   timeFoul,
 } from "./common"
@@ -28,7 +29,7 @@ import {
   SimResult,
 } from "./types"
 
-export const ENGINE_VERSION = "0.7.2"
+export const ENGINE_VERSION = "0.12.0"
 
 export const RULE_TYPES: readonly RuleType[] = [
   "threecushion",
@@ -37,7 +38,7 @@ export const RULE_TYPES: readonly RuleType[] = [
   "eightball",
 ]
 
-export { SHOT_LIMITS, stateHash }
+export { SHOT_LIMITS, shotLimits, stateHash }
 
 /**
  * Time-outs per player by match length, as applied at UMB World Cups:
@@ -291,7 +292,7 @@ function shoot(
   input: Shot,
   side: Side | undefined
 ): ActionResult {
-  const shot = canonicalShot(input)
+  const shot = canonicalShot(input, shotLimits(state.config.ruleType))
   if (typeof shot === "string") {
     return fail("SHOT_OUT_OF_RANGE", shot)
   }

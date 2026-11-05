@@ -6,6 +6,7 @@ import {
   extendClock,
   fail,
   other,
+  shotLimits,
   stateHash,
   timeFoul,
 } from "../common"
@@ -705,7 +706,7 @@ function refuseShot(
   if (pushOut && !pool.pushOutAvailable) {
     return fail("ILLEGAL_ACTION", "pushOut")
   }
-  const shot = canonicalShot(input)
+  const shot = canonicalShot(input, shotLimits(ruleType))
   if (typeof shot === "string") {
     return fail("SHOT_OUT_OF_RANGE", shot)
   }

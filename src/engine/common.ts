@@ -7,14 +7,35 @@ import {
   ErrorCode,
   MatchState,
   Seat,
+  RuleType,
   Shot,
   ShotLimits,
 } from "./types"
 
+/** The widest limits, those of a pocket table. */
 export const SHOT_LIMITS: ShotLimits = {
   power: [Math.fround(maxPower * 0.02), Math.fround(maxPower)],
   offsetMax: offCenterLimit,
   elevation: [0, Math.fround((2 * Math.PI) / 5)],
+}
+
+/**
+ * A carom table's hardest shot: 6.35 m/s, which takes a full-side shot from
+ * the corner along the long rail round nine cushions to stop in the quarter
+ * it started from, as professionals play it. The bar is curved so that its
+ * middle stays the systems' medium pace (2.6 m/s).
+ */
+const CAROM_LIMITS: ShotLimits = {
+  ...SHOT_LIMITS,
+  power: [SHOT_LIMITS.power[0], Math.fround((maxPower * 194) / 176)],
+  powerCurve: 1.33,
+}
+
+/** The limits a shot has to keep to on this kind of table. */
+export function shotLimits(ruleType: RuleType): ShotLimits {
+  return ruleType === "threecushion" || ruleType === "sagu"
+    ? CAROM_LIMITS
+    : SHOT_LIMITS
 }
 
 export function isInt(value: unknown, min: number, max: number): boolean {
@@ -36,7 +57,10 @@ export function other(seat: Seat): Seat {
 }
 
 /** Round to float32 and range-check. Returns a reason string when invalid. */
-export function canonicalShot(input: Shot): Shot | string {
+export function canonicalShot(
+  input: Shot,
+  limits: ShotLimits = SHOT_LIMITS
+): Shot | string {
   const raw = [
     input?.angle,
     input?.power,
@@ -56,17 +80,17 @@ export function canonicalShot(input: Shot): Shot | string {
   if (Math.abs(shot.angle) > 2 * Math.PI) {
     return "angle"
   }
-  if (shot.power < SHOT_LIMITS.power[0] || shot.power > SHOT_LIMITS.power[1]) {
+  if (shot.power < limits.power[0] || shot.power > limits.power[1]) {
     return "power"
   }
   if (
-    shot.elevation < SHOT_LIMITS.elevation[0] ||
-    shot.elevation > SHOT_LIMITS.elevation[1]
+    shot.elevation < limits.elevation[0] ||
+    shot.elevation > limits.elevation[1]
   ) {
     return "elevation"
   }
   // small allowance: the limit is applied in float64 by the aiming UI
-  if (Math.hypot(shot.offset.x, shot.offset.y) > SHOT_LIMITS.offsetMax + 1e-6) {
+  if (Math.hypot(shot.offset.x, shot.offset.y) > limits.offsetMax + 1e-6) {
     return "offset"
   }
   return shot
